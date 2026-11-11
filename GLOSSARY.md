@@ -35,6 +35,12 @@ as the **Errored activity**. Corresponds to
 Reparo's `event_id` / `event_name`.
 _Avoid_: event (alone, when the performance is meant), UI log entry.
 
+**Process model**: The description of a **Process**'s structure (its **Events** with their
+**Event ids** and grounded names, and the conditions and loops connecting them) that Reparo
+receives with a failure. It comes from the Process alone and is the same for every run.
+Corresponds to Reparo's `model`.
+_Avoid_: BPMN (one format the Process model can take, not the concept), diagram.
+
 **Variables**: The named, serialisable values a **Process** reads and writes; the only state that
 passes from one **Event** to another, and the state sent to Reparo with a failure.
 
