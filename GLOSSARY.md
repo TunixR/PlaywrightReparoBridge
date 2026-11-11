@@ -15,17 +15,23 @@ _Avoid_: block, step, task.
 
 **Event**: The atomic node of a **Process**, as defined, not as performed: one grounded UI action
 ("click Approve", "type the amount into Amount"). A check of that action's outcome belongs to the
-same Event; a check alone is never an Event. Every **Continuation** resumes at an Event, so an
+same Event; a check alone is never an Event. An Event performs at most one UI action with a side
+effect; an Event with none is a read of a value off the page. Each Event has a grounded name,
+which another Event may share; only its **Event id** is unique. Every **Continuation** resumes at an Event, so an
 Event depends on nothing produced by another Event except **Variables**. Corresponds to a task of
 the process model Reparo receives.
 _Avoid_: step, task, action (reserved for what Reparo sends back during a **Recovery**).
 
 **Event id**: The stable identifier of an **Event** within its **Process**, the same on every run
-and every loop pass; the id Reparo names in a **Continuation**. Never a **Logged event**'s number.
+and every loop pass; the id Reparo names in a **Continuation**, and the link from each **Logged
+event** to the Event it performed. Never a **Logged event**'s number. Corresponds to Reparo's
+`model_event_id`.
 _Avoid_: model event id (Reparo's wording for the same thing).
 
 **Logged event**: One performance of an **Event** in a run, an entry of the **UI log**, numbered in
-the order it happened; an Event inside a loop yields one Logged event per pass. Corresponds to
+the order it happened; an Event inside a loop yields one Logged event per pass, named after the
+Event plus that pass. The failing performance is not a Logged event: it is reported apart,
+as the **Errored activity**. Corresponds to
 Reparo's `event_id` / `event_name`.
 _Avoid_: event (alone, when the performance is meant), UI log entry.
 
