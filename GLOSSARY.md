@@ -72,12 +72,36 @@ hands control back.
 **Activity** should achieve, offered to Reparo as a preferred plan.
 _Avoid_: recovery hint.
 
-**Observation**: What the bridge gives Reparo to see the browser's state during a **Recovery**.
-Today a screenshot; DOM or accessibility-tree observations are anticipated.
+**Modality**: A way the bridge lets Reparo see the browser and target elements during a
+**Recovery**, pairing a kind of **Observation** with a way of aiming **Recovery actions**: vision
+(screenshots, coordinates) today, DOM anticipated. A robot offers one or more, in order of
+preference. Corresponds to Reparo's interaction modality.
+_Avoid_: recovery mode, observation mode, agent mode.
+
+**Observation**: What the bridge gives Reparo to see the browser's state during a **Recovery**, in
+one of its **Modalities**. Today a screenshot; DOM or accessibility-tree observations are
+anticipated.
 
 **Recovery action**: A UI action Reparo asks the bridge to perform on the browser during a
-**Recovery** (click at coordinates, type, scroll...).
+**Recovery** (click, type, scroll...), aimed at its target through a **Modality** (coordinates
+today).
 
 **Continuation**: Resuming the **Process** after a **Recovery**, at the **Event** (named by its
 **Event id**, plus the loop pass) Reparo says should run next, skipping whatever the **Recovery**
 already did and nothing it did not.
+
+**Completion check**: A check, written by the process author, of the state a **Process** should
+have reached once its last **Event** has run, on every run, whether or not a **Recovery** happened.
+It reports whether it is met, with a reason when it is not, and never fails the run itself. It
+states what the robot can believe about its own completion, not an audit of whether the run was
+truly correct. It is not an **Event**: it is never part of the **Process model**, never resumed at, and never
+handed to Reparo.
+_Avoid_: final assertion, verification step.
+
+**Run outcome**: How a run of a **Process** ends: completed (the **Completion checks** passed),
+checks failed (the Process reached its end but a Completion check was not met), or failed before
+reaching its end. A failed run is further told apart by when it failed relative to a **Recovery**:
+before any, because Reparo declined or could not be reached, because Reparo's answer could not be
+continued from, or during the **Continuation**. Only a completed run counts as a successful
+Recovery when its result is reported to Reparo.
+_Avoid_: status, result (alone).
