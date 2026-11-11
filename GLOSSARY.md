@@ -14,7 +14,8 @@ Corresponds to Reparo's `activity_id` / `activity_name`.
 _Avoid_: block, step, task.
 
 **Event**: The atomic node of a **Process**, as defined, not as performed: one grounded UI action
-("click Approve", "type the amount into Amount"). Every **Continuation** resumes at an Event, so an
+("click Approve", "type the amount into Amount"). A check of that action's outcome belongs to the
+same Event; a check alone is never an Event. Every **Continuation** resumes at an Event, so an
 Event depends on nothing produced by another Event except **Variables**. Corresponds to a task of
 the process model Reparo receives.
 _Avoid_: step, task, action (reserved for what Reparo sends back during a **Recovery**).
@@ -34,8 +35,22 @@ passes from one **Event** to another, and the state sent to Reparo with a failur
 **UI log**: The ordered record of **Logged events** in a run up to the failure, sent to Reparo as
 part of the failure payload.
 
-**Errored activity**: The **Activity** (and the **Logged event** inside it) where the run failed,
-with the error that stopped it.
+**UI failure**: A failure inside an **Event** because the application did not behave as the
+**Process** expected: an element missing, a check the author declared not met. The only kind of
+failure handed to Reparo as a **Recovery**.
+_Avoid_: error (alone), exception.
+
+**Process bug**: A mistake in the **Process**'s own code (a wrong condition, a missing
+**Variable**). It ends the run locally and is never handed to Reparo, wherever it happens.
+_Avoid_: UI failure, coding error.
+
+**Environment failure**: A failure that stops the run for reasons outside both the application's
+UI and the **Process**'s code: a service that cannot be reached, a browser that closed or crashed.
+It ends the run locally and is never handed to Reparo.
+_Avoid_: UI failure, Process bug.
+
+**Errored activity**: The **Activity** (and the **Logged event** inside it) where a **UI failure**
+stopped the run, with a short description of that failure.
 
 **Recovery**: One hand-over of a failed run to Reparo: the bridge reports the failure, Reparo
 observes and acts on the browser until it is back in a state the process can continue from, then
