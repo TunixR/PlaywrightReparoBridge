@@ -11,6 +11,8 @@ Status: planning. See the map issue
 
 ```bash
 uv sync
+uv run playwright install chromium  # once: tests use real headless Chromium
 uv run pytest
 uv run ruff check
+uv run basedpyright
 ```
