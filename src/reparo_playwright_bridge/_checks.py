@@ -21,41 +21,25 @@ class _BadReturn(Exception):
 
 
 def _unmet_reason(returned: object) -> str | None:
-    """None if `returned` means met, the reason if it means unmet; `_BadReturn` otherwise.
-
-    A bad return is described by its types only: its values may hold Variable values, which are
-    never logged.
-    """
+    """None if `returned` means met, the reason if it means unmet; `_BadReturn` otherwise."""
+    # A bad return names only its shape: its value may hold Variable values, which are never logged.
     if not isinstance(returned, tuple):
-        raise _BadReturn(f"returned {_article(returned)}, {_EXPECTED}")
+        raise _BadReturn(f"returned a {type(returned).__name__}, {_EXPECTED}")
     items = cast("tuple[object, ...]", returned)
     if len(items) == 2:
         met, reason = items
-        if met is True:
-            if reason is None:
-                return None
-            raise _BadReturn(
-                f"returned True with {_article(reason)} reason; a met check returns (True, None)"
-            )
-        if met is False:
-            if isinstance(reason, str) and reason.strip():
-                return reason
-            what = "a blank" if isinstance(reason, str) else _article(reason)
-            raise _BadReturn(
-                f"returned False with {what} reason; "
-                + "an unmet check returns (False, <non-empty str reason>)"
-            )
-    shape = ", ".join(type(item).__name__ for item in items)
-    raise _BadReturn(f"returned ({shape}), {_EXPECTED}")
+        if met is True and reason is None:
+            return None
+        if met is False and isinstance(reason, str) and reason.strip():
+            return reason
+    raise _BadReturn(f"returned {_shape(items)}, {_EXPECTED}")
 
 
 _EXPECTED = "expected (True, None) or (False, <non-empty str reason>)"
 
 
-def _article(value: object) -> str:
-    """`a bool`, `an int`: the value's type name, never the value."""
-    name = type(value).__name__
-    return f"{'an' if name[0].lower() in 'aeiou' else 'a'} {name}"
+def _shape(items: tuple[object, ...]) -> str:
+    return "(" + ", ".join(type(item).__name__ for item in items) + ")"
 
 
 async def run_checks(
