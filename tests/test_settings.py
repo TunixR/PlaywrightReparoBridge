@@ -122,3 +122,13 @@ def test_overrides() -> None:
         timedelta(seconds=1),
         timedelta(seconds=2),
     )
+
+
+def test_validating_a_mapping_also_falls_back_to_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REPARO_ROBOT_KEY", "from-env")
+
+    settings = ReparoSettings.model_validate({"base_url": "https://reparo.example.com"})
+
+    assert settings.robot_key.get_secret_value() == "from-env"

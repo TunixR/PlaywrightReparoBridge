@@ -217,22 +217,22 @@ async def test_a_case_id_callable_that_raises_ends_the_run_local(
 
 
 def page_watcher(
-    steps: list[Callable[[EventContext], Awaitable[None]]], seen: list[str]
+    bodies: list[Callable[[EventContext], Awaitable[None]]], seen: list[str]
 ) -> Process:
-    """One Event per step; each records the URL of its ctx.page before running its step."""
+    """One Event per body; each records the URL of its ctx.page, then runs its body."""
     p = Process("watch")
     with p.activity("Watch pages"):
-        for n, step in enumerate(steps):
+        for n, body in enumerate(bodies):
 
             async def event(
                 ctx: EventContext,
-                step: Callable[[EventContext], Awaitable[None]] = step,
+                body: Callable[[EventContext], Awaitable[None]] = body,
             ) -> None:
                 seen.append(ctx.page.url)
-                await step(ctx)
+                await body(ctx)
 
-            event.__name__ = f"step_{n}"
-            _ = p.event(f"Step {n}")(event)
+            event.__name__ = f"event_{n}"
+            _ = p.event(f"Event {n}")(event)
     return p
 
 
@@ -290,13 +290,13 @@ async def test_an_event_that_opens_a_tab_leaves_the_next_event_on_that_tab(
             await ctx.page.get_by_role("link", name="Detail").click()
         await (await popup.value).wait_for_load_state()
 
-    steps: list[Callable[[EventContext], Awaitable[None]]] = [
+    bodies: list[Callable[[EventContext], Awaitable[None]]] = [
         open_list,
         open_detail_in_a_tab,
         _nothing,
     ]
     result = await run(
-        page_watcher(steps, seen), context=context, reparo=reparo, case_id=1
+        page_watcher(bodies, seen), context=context, reparo=reparo, case_id=1
     )
 
     assert result.outcome == "completed"
@@ -472,6 +472,19 @@ async def _click_missing(ctx: EventContext) -> None:
     await ctx.page.get_by_role("button", name="Reject").click(timeout=300)
 
 
+async def _click_missing_whose_selector_names_an_environment_failure(
+    ctx: EventContext,
+) -> None:
+    # The call log repeats the selector; only the error itself decides the class.
+    await ctx.page.get_by_text("Target closed: Protocol error, crashed").click(
+        timeout=300
+    )
+
+
+async def _click_ambiguous(ctx: EventContext) -> None:
+    await ctx.page.locator("button, p").click(timeout=300)
+
+
 async def _failed_expect(ctx: EventContext) -> None:
     await expect(ctx.page.locator("#status")).to_have_text("approved", timeout=300)
 
@@ -481,7 +494,15 @@ async def _declared_failure(ctx: EventContext) -> None:
 
 
 @pytest.mark.parametrize(
-    "body", [_click_disabled, _click_missing, _failed_expect, _declared_failure]
+    "body",
+    [
+        _click_disabled,
+        _click_missing,
+        _click_missing_whose_selector_names_an_environment_failure,
+        _click_ambiguous,
+        _failed_expect,
+        _declared_failure,
+    ],
 )
 async def test_a_ui_failure_ends_the_run_local_without_reparo(
     context: BrowserContext,

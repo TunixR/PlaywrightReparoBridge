@@ -69,15 +69,18 @@ def classify(exc: BaseException) -> Classified:
     if isinstance(exc, UIFailure):
         return Classified(FailureKind.UI, exc.description, exc.code)
     if isinstance(exc, PlaywrightError):
+        # Only the first line is the error; the rest is Playwright's call log, which
+        # repeats selectors and so can contain any text. Shapes whose first line quotes
+        # the selector (strict mode) are matched before the Environment markers.
         message = _first_line(exc.message)
-        if any(
-            marker in exc.message for marker in _ENVIRONMENT_MARKERS
-        ) or message.startswith(_ENVIRONMENT_PREFIXES):
-            return Classified(FailureKind.ENVIRONMENT, message)
         if isinstance(exc, PlaywrightTimeoutError):
             return Classified(FailureKind.UI, message, ELEMENT_TIMEOUT)
-        if "strict mode violation" in exc.message:
+        if "strict mode violation" in message:
             return Classified(FailureKind.UI, message, ELEMENT_AMBIGUOUS)
+        if any(marker in message for marker in _ENVIRONMENT_MARKERS):
+            return Classified(FailureKind.ENVIRONMENT, message)
+        if message.startswith(_ENVIRONMENT_PREFIXES):
+            return Classified(FailureKind.ENVIRONMENT, message)
         if message.startswith(_COMPONENT_PREFIXES):
             return Classified(FailureKind.UI, message, UI_ACTION_FAILED)
     if isinstance(exc, AssertionError) and _raised_by_playwright_expect(exc):

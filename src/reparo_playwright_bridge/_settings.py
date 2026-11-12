@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import os
 from datetime import timedelta
-from typing import ClassVar, Literal
+from typing import ClassVar
 from urllib.parse import quote, urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
-ModelFormat = Literal["bpmn", "compact"]
+from reparo_playwright_bridge._model_export import ModelFormat
 
 ROBOT_KEY_ENV = "REPARO_ROBOT_KEY"
 DEFAULT_SILENCE_TIMEOUT = timedelta(minutes=2)

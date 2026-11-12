@@ -14,5 +14,6 @@ uv sync
 uv run playwright install chromium  # once: tests use real headless Chromium
 uv run pytest
 uv run ruff check
+uv run ruff format
 uv run basedpyright
 ```
