@@ -188,12 +188,28 @@ async def _returns_unmet_without_reason(_ctx: CheckContext) -> tuple[bool, str |
     return False, None
 
 
+async def _returns_unmet_with_a_non_str_reason(
+    _ctx: CheckContext,
+) -> tuple[bool, int]:
+    return False, 250
+
+
+async def _returns_unmet_with_a_blank_reason(
+    _ctx: CheckContext,
+) -> tuple[bool, str | None]:
+    return False, "  "
+
+
 async def _returns_met_with_reason(_ctx: CheckContext) -> tuple[bool, str | None]:
     return True, "all good"
 
 
 async def _returns_truthy_int(_ctx: CheckContext) -> tuple[int, None]:
     return 1, None
+
+
+async def _returns_a_triple(_ctx: CheckContext) -> tuple[bool, None, None]:
+    return True, None, None
 
 
 async def _ui_error(ctx: CheckContext) -> tuple[bool, str | None]:
@@ -207,9 +223,12 @@ async def _ui_error(ctx: CheckContext) -> tuple[bool, str | None]:
         (_writes_vars, "TypeError"),
         (_raises, "ZeroDivisionError"),
         (_returns_bare_true, "a bool"),
-        (_returns_unmet_without_reason, "(bool, NoneType)"),
-        (_returns_met_with_reason, "(bool, str)"),
-        (_returns_truthy_int, "(int, NoneType)"),
+        (_returns_unmet_without_reason, "a NoneType reason; an unmet check"),
+        (_returns_unmet_with_a_non_str_reason, "an int reason; an unmet check"),
+        (_returns_unmet_with_a_blank_reason, "a blank reason; an unmet check"),
+        (_returns_met_with_reason, "a str reason; a met check returns (True, None)"),
+        (_returns_truthy_int, "returned (int, NoneType)"),
+        (_returns_a_triple, "returned (bool, NoneType, NoneType)"),
         (_ui_error, "Timeout"),
     ],
 )
