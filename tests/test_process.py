@@ -1,8 +1,11 @@
 """The `Process` builder and `Process.to_model()`, with no browser."""
 
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
+from pathlib import Path
 
 import pytest
+import xmlschema
 
 from reparo_playwright_bridge import EventContext, Process
 
@@ -576,3 +579,46 @@ def test_bpmn_of_branches_and_loops_is_a_well_formed_graph() -> None:
     forward = [(s, t) for s, t, _ in flows]
     assert reachable(starts[0], forward) == set(nodes)
     assert reachable(ends[0], [(t, s) for s, t in forward]) == set(nodes)
+
+
+# --------------------------------------------------------------------------- BPMN 2.0 schema
+
+
+@pytest.fixture(scope="module")
+def bpmn_schema() -> xmlschema.XMLSchema:
+    return xmlschema.XMLSchema(Path(__file__).parent / "bpmn20" / "BPMN20.xsd")
+
+
+def _no_else() -> Process:
+    p = Process("no_else")
+    with p.if_("decide", _yes, label="yes"):
+        _event(p, "do_it", "Do it")
+    return p
+
+
+def _empty_blocks() -> Process:
+    p = Process("empty_blocks")
+    with p.if_("decide", _yes, label="yes"):
+        pass
+    with p.for_each("each", over="items", as_="item"):
+        pass
+    return p
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        greet_process,
+        spending_process,
+        _no_else,
+        _empty_blocks,
+        lambda: Process("empty"),
+    ],
+    ids=["sequence", "branches and loops", "no else", "empty blocks", "empty process"],
+)
+def test_bpmn_validates_against_the_bpmn_2_0_schema(
+    bpmn_schema: xmlschema.XMLSchema, make: Callable[[], Process]
+) -> None:
+    errors = [str(e) for e in bpmn_schema.iter_errors(make().to_model("bpmn"))]
+
+    assert errors == []

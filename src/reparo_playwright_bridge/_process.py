@@ -61,7 +61,8 @@ class Process:
         self._activities: dict[str, str] = {}  # Activity id -> name
         self._activity: Activity | None = None
         self._sequences: list[SequenceNode] = [self._definition.root]
-        """The open blocks, innermost last: new nodes go into the last one."""
+        """The open blocks, innermost last: new nodes go into the last one. It acts as a stack of tree nodes, where the first is the root, and the last is the current block being built.
+        The final value of sequences after going over the definition is a single root node."""
         self._open_xor: XorNode | None = None
         """The XOR gateway whose arm closed last: an `elif_` / `else_` right after it adds to it."""
 
