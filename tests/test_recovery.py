@@ -12,6 +12,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
+from aiohttp import web
 from playwright.async_api import BrowserContext, expect
 
 from reparo_playwright_bridge import (
@@ -478,6 +479,40 @@ async def test_a_rejected_robot_key_ends_the_run_local_at_once(
     assert "robot key" in result.reason
     assert reparo.payloads == []
     assert elapsed < 5
+
+
+async def test_a_robot_key_refused_at_the_handshake_ends_the_run_local(
+    context: BrowserContext, site: FixtureServer
+) -> None:
+    """Real Reparo closes with 1008 before accepting, which reaches the robot as HTTP 403."""
+    _ = site.page("/page", PAGE)
+
+    async def refuse(_request: web.Request) -> web.Response:
+        return web.Response(status=403)
+
+    app = web.Application()
+    _ = app.router.add_get("/recovery/robot_exception/ws", refuse)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = int(sock.getsockname()[1])
+        await web.SockSite(runner, sock).start()
+        try:
+            result = await run(
+                approval_process(_click_disabled),
+                context=context,
+                reparo=ReparoSettings(
+                    base_url=f"http://127.0.0.1:{port}", robot_key="not-the-key"
+                ),
+                case_id=1,
+            )
+        finally:
+            await runner.cleanup()
+
+    assert result.outcome == "local"
+    assert result.reason is not None
+    assert "robot key" in result.reason
 
 
 # --------------------------------------------------------------------------- report_result

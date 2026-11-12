@@ -28,6 +28,7 @@ from reparo_playwright_bridge._payload import (
     ErroredActivity,
     LoggedEvent,
     build_payload,
+    pass_suffix,
 )
 from reparo_playwright_bridge._process import Process, definition_of
 from reparo_playwright_bridge._protocol import Ended, recover
@@ -38,11 +39,6 @@ from reparo_playwright_bridge._settings import ReparoSettings
 CaseId = str | int
 Passes = tuple[int, ...]
 """The pass of each enclosing loop, outermost first."""
-
-
-def _suffix(passes: Passes) -> str:
-    """The pass suffix the UI log puts on a name: ` #1#2`, or nothing outside loops."""
-    return " " + "".join(f"#{i}" for i in passes) if passes else ""
 
 
 class _LocalFailure(Exception):
@@ -205,10 +201,10 @@ class _Run:
             run_log.info(
                 "Activity %s entered%s",
                 event.activity.name,
-                _suffix(passes),
+                pass_suffix(passes),
                 extra=extra,
             )
-        name = event.id + _suffix(passes)
+        name = event.id + pass_suffix(passes)
         run_log.debug("Event %s started", name, extra=extra)
         started = time.monotonic()
         snapshot = copy.deepcopy(variables)

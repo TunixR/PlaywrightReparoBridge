@@ -15,12 +15,20 @@ type JsonObject = dict[str, object]
 
 PLATFORM = "playwright"
 NO_CALL_ATTEMPTED = "check"
-"""The Errored activity's `action_type` when the Event attempted no logged call."""
+"""The Errored activity's `action_type` when the Event attempted no logged call.
+
+Until the recording page records each Event's call, every UI log entry carries it too.
+"""
+
+
+def pass_suffix(passes: tuple[int, ...]) -> str:
+    """` #<pass>` per enclosing loop, outermost first (` #1#2`), or nothing outside loops."""
+    return " " + "".join(f"#{i}" for i in passes) if passes else ""
 
 
 def event_name(event: EventNode, passes: tuple[int, ...]) -> str:
-    """The grounded name plus `#<pass>` per enclosing loop, outermost first: `Click Approve #1#2`."""
-    return event.name + (" " + "".join(f"#{i}" for i in passes) if passes else "")
+    """The grounded name plus its pass suffix: `Click Approve #1#2`."""
+    return event.name + pass_suffix(passes)
 
 
 @dataclass(frozen=True)
@@ -52,9 +60,13 @@ class ErroredActivity:
 
 @dataclass(frozen=True)
 class Payload:
+    """The payload's JSON body, plus the counts its log line shows instead of its content."""
+
     body: JsonObject
+    logged_events: int
+    variable_count: int
     model_size: int
-    """The size of `model` in bytes, for the counts-only log line."""
+    """The size of `model` in bytes."""
 
 
 def _common(
@@ -120,4 +132,4 @@ def build_payload(
     }
     if future and errored.event.activity.recovery_task is not None:
         body["recovery_task"] = errored.event.activity.recovery_task
-    return Payload(body, len(model.encode()))
+    return Payload(body, len(entries), len(variables), len(model.encode()))

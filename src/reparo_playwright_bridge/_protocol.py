@@ -6,11 +6,11 @@ import json
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import ClassVar, cast
+from typing import ClassVar, Self, cast
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 from websockets.asyncio.client import ClientConnection, connect
-from websockets.exceptions import ConnectionClosed, InvalidHandshake
+from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidStatus
 
 from reparo_playwright_bridge._log import recovery_log
 from reparo_playwright_bridge._payload import Payload
@@ -20,6 +20,8 @@ from reparo_playwright_bridge._settings import ReparoSettings
 ROBOT_KEY_HEADER = "X-ROBOT-KEY"
 INVALID_RECOVERY_PAYLOAD = "INVALID_RECOVERY_PAYLOAD"
 REJECTED_KEY_CLOSE = 1008
+REJECTED_KEY_STATUS = 403
+"""Reparo closes with 1008 before accepting the socket, which reaches the robot as HTTP 403."""
 
 # websockets logs handshake headers at DEBUG, which include the robot key: give it a logger
 # that is never wired to any handler.
@@ -55,6 +57,16 @@ class Ended:
     failure_type: FailureType
     reason: str
 
+    @classmethod
+    def unavailable(
+        cls, reason: str, failure_type: FailureType = "recovery_unavailable"
+    ) -> Self:
+        return cls("recovery_unavailable", failure_type, reason)
+
+    @classmethod
+    def key_rejected(cls, how: str) -> Self:
+        return cls("local", "local", f"Reparo rejected the robot key ({how})")
+
 
 async def recover(
     settings: ReparoSettings, payload: Payload, extra: Mapping[str, object]
@@ -65,34 +77,31 @@ async def recover(
         ws = await connect(
             settings.websocket_url, additional_headers=headers, logger=_SILENT
         )
-    except (OSError, InvalidHandshake, TimeoutError) as exc:
-        return Ended(
-            "recovery_unavailable",
-            "recovery_unavailable",
-            f"could not connect to Reparo ({type(exc).__name__})",
+    except InvalidStatus as exc:
+        if exc.response.status_code == REJECTED_KEY_STATUS:
+            return Ended.key_rejected(f"HTTP {REJECTED_KEY_STATUS}")
+        return Ended.unavailable(
+            f"could not connect to Reparo (HTTP {exc.response.status_code})"
         )
+    except (OSError, InvalidHandshake, TimeoutError) as exc:
+        return Ended.unavailable(f"could not connect to Reparo ({type(exc).__name__})")
     async with ws:
         try:
             await ws.send(json.dumps(payload.body))
-            body = payload.body
             recovery_log.info(
                 "payload sent: %d logged events, model %.1f kB %s, %d variables",
-                len(cast("list[object]", body["ui_log"])),
+                payload.logged_events,
                 payload.model_size / 1000,
                 settings.model_format.upper(),
-                len(cast("dict[str, object]", body["variables"])),
+                payload.variable_count,
                 extra=dict(extra),
             )
             return await _serve(ws, extra)
         except ConnectionClosed as closed:
             if closed.rcvd is not None and closed.rcvd.code == REJECTED_KEY_CLOSE:
-                return Ended(
-                    "local", "local", "Reparo rejected the robot key (close 1008)"
-                )
-            return Ended(
-                "recovery_unavailable",
-                "recovery_unavailable",
-                "Reparo closed the connection before ending the Recovery",
+                return Ended.key_rejected(f"close {REJECTED_KEY_CLOSE}")
+            return Ended.unavailable(
+                "Reparo closed the connection before ending the Recovery"
             )
 
 
@@ -139,10 +148,8 @@ def _done(message: dict[str, object]) -> Done | Ended:
     except ValidationError:
         content = None
     if content is None or not isinstance(recovery_id, str) or not recovery_id:
-        return Ended(
-            "recovery_unavailable",
-            "recovery_unavailable",
-            "Reparo sent a done without a Continuation and a Recovery id",
+        return Ended.unavailable(
+            "Reparo sent a done without a Continuation and a Recovery id"
         )
     return Done(content, recovery_id)
 
@@ -153,13 +160,8 @@ def _error(message: dict[str, object], extra: Mapping[str, object]) -> Ended:
         recovery_log.error(
             "Reparo rejected the payload: %s", message.get("content"), extra=dict(extra)
         )
-        return Ended(
-            "recovery_unavailable",
-            "payload_rejected",
+        return Ended.unavailable(
             f"Reparo rejected the Recovery payload ({INVALID_RECOVERY_PAYLOAD})",
+            "payload_rejected",
         )
-    return Ended(
-        "recovery_unavailable",
-        "recovery_unavailable",
-        f"Reparo answered with error {code}",
-    )
+    return Ended.unavailable(f"Reparo answered with error {code}")
