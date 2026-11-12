@@ -37,10 +37,6 @@ _CLOSING = (WSMsgType.CLOSE, WSMsgType.CLOSING, WSMsgType.CLOSED, WSMsgType.ERRO
 type JsonObject = dict[str, Any]  # pyright: ignore[reportExplicitAny]  # decoded JSON holds any value
 
 
-class _InvalidPayload(Exception):
-    """The robot's payload breaks Reparo's schema; the message says how."""
-
-
 @dataclass(frozen=True)
 class Report:
     """One `POST report_result` the robot sent."""
@@ -70,7 +66,7 @@ class FakeReparo:
             raise ValueError(
                 f"FakeReparo script has steps after the terminal step {early_ends[0]!r}"
             )
-        self._context: BrowserContext | None = context
+        self._context: BrowserContext | None = context  # resolves `Locate` targets
         self.ping_interval: float = ping_interval
         self.robot_key: str = secrets.token_urlsafe(16)
         self.payloads: list[JsonObject] = []
@@ -115,18 +111,24 @@ class FakeReparo:
             self._runner = None
 
     async def _report_result(self, request: web.Request) -> web.Response:
+        recovery_id = request.match_info["recovery_id"]
+        try:
+            _ = uuid.UUID(recovery_id)
+        except ValueError:
+            return web.json_response(
+                {"detail": "Invalid recovery ID format. Must be a UUID."}, status=400
+            )
         key = request.headers.get(ROBOT_KEY_HEADER)
         if not key:
             return web.json_response({"detail": "No robot key provided"}, status=401)
         if key != self.robot_key:
             return web.json_response({"detail": "Invalid robot key"}, status=403)
-        recovery_id = request.match_info["recovery_id"]
-        if recovery_id not in self._recovery_ids:
-            return web.json_response({"detail": "Recovery ID not found"}, status=404)
         try:
             body = cast(object, await request.json())
         except json.JSONDecodeError:
             return web.json_response({"detail": "Body is not JSON"}, status=400)
+        if recovery_id not in self._recovery_ids:
+            return web.json_response({"detail": "Recovery ID not found"}, status=404)
         self.reports.append(Report(recovery_id=recovery_id, body=body))
         return web.Response(status=204)
 
@@ -158,15 +160,28 @@ class FakeReparo:
         first = await ws.receive()
         if first.type in _CLOSING:
             return
+        decoded = _decode_json_text(first)
+        if decoded is None:  # Reparo decodes outside its error handling, and crashes
+            testing_log.warning(
+                "FakeReparo got a payload that is not JSON text (close 1011)"
+            )
+            _ = await ws.close(code=1011, message=b"Internal server error")
+            return
+        if isinstance(decoded, dict):
+            self.payloads.append(cast(JsonObject, decoded))
         try:
-            payload = self._accept_payload(first)
-        except _InvalidPayload as exc:
-            testing_log.warning("FakeReparo rejected the payload: %s", exc)
+            _ = RecoveryPayload.model_validate(decoded)
+        except ValidationError as exc:
+            testing_log.warning(
+                "FakeReparo rejected the payload (close 1003): %s",
+                _error_locations(exc),
+            )
             await ws.send_json(
                 {"type": "error", "code": INVALID_RECOVERY_PAYLOAD, "content": str(exc)}
             )
             _ = await ws.close(code=1003, message=b"Invalid recovery payload")
             return
+        payload = cast(JsonObject, decoded)
         reader = asyncio.create_task(self._record_robot_frames(ws))
         player = asyncio.create_task(self._play(ws, payload))
         try:
@@ -204,23 +219,6 @@ class FakeReparo:
                 message = obj
             self.replies.append(message)
 
-    def _accept_payload(self, frame: WSMessage) -> JsonObject:
-        """Record the payload frame, then validate it against Reparo's schema."""
-        if frame.type is not WSMsgType.TEXT:
-            raise _InvalidPayload("the payload must be one JSON text frame")
-        try:
-            payload = cast(object, json.loads(cast(str, frame.data)))
-        except json.JSONDecodeError as exc:
-            raise _InvalidPayload(f"the payload is not JSON: {exc}") from exc
-        if not isinstance(payload, dict):
-            raise _InvalidPayload("the payload must be a JSON object")
-        self.payloads.append(cast(JsonObject, payload))
-        try:
-            _ = RecoveryPayload.model_validate(payload)
-        except ValidationError as exc:
-            raise _InvalidPayload(str(exc)) from exc
-        return cast(JsonObject, payload)
-
     async def _play(self, ws: web.WebSocketResponse, payload: JsonObject) -> None:
         echoed = cast(object, payload.get("variables", {}))
         for step in self._script:
@@ -228,28 +226,22 @@ class FakeReparo:
                 case Continue():
                     await self._send_done(
                         ws,
-                        {
-                            "success": True,
-                            "process_finished": step.process_finished,
-                            "continue_from_model_event_id": step.event_id,
-                            "loop_iteration": list(step.loop_iteration),
-                            "variables": echoed
-                            if step.variables is None
-                            else step.variables,
-                        },
+                        success=True,
+                        process_finished=step.process_finished,
+                        event_id=step.event_id,
+                        loop_iteration=step.loop_iteration,
+                        variables=echoed if step.variables is None else step.variables,
                     )
                     return
                 case Decline():
                     testing_log.info("FakeReparo declines: %s", step.reason)
                     await self._send_done(
                         ws,
-                        {
-                            "success": False,
-                            "process_finished": False,
-                            "continue_from_model_event_id": None,
-                            "loop_iteration": [],
-                            "variables": echoed,
-                        },
+                        success=False,
+                        process_finished=False,
+                        event_id=None,
+                        loop_iteration=[],
+                        variables=echoed,
                     )
                     return
                 case SendError():
@@ -276,8 +268,43 @@ class FakeReparo:
         )
         _ = await ws.close()
 
-    async def _send_done(self, ws: web.WebSocketResponse, content: JsonObject) -> None:
+    async def _send_done(
+        self,
+        ws: web.WebSocketResponse,
+        *,
+        success: bool,
+        process_finished: bool,
+        event_id: str | None,
+        loop_iteration: list[int],
+        variables: object,
+    ) -> None:
+        """Send the future `done` (TunixR/Reparo#230 / #231) with a new Recovery id, then close."""
         recovery_id = str(uuid.uuid4())
         self._recovery_ids.add(recovery_id)
+        content = {
+            "success": success,
+            "process_finished": process_finished,
+            "continue_from_model_event_id": event_id,
+            "loop_iteration": list(loop_iteration),
+            "variables": variables,
+        }
         await ws.send_json({"type": "done", "content": content, "id": recovery_id})
         _ = await ws.close()
+
+
+def _decode_json_text(frame: WSMessage) -> object | None:
+    """The frame's JSON value, or None when it is not a JSON text frame."""
+    if frame.type is not WSMsgType.TEXT:
+        return None
+    try:
+        return cast(object, json.loads(cast(str, frame.data)))
+    except json.JSONDecodeError:
+        return None
+
+
+def _error_locations(exc: ValidationError) -> str:
+    """Where and how a payload breaks the schema, without the offending values."""
+    return "; ".join(
+        f"{'.'.join(str(part) for part in error['loc']) or '<root>'}: {error['type']}"
+        for error in exc.errors()
+    )

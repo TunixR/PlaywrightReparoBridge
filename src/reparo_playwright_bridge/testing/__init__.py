@@ -4,7 +4,7 @@ Needs the `[fake]` extra: `pip install "reparo-playwright-bridge[fake]"`.
 """
 
 try:
-    import aiohttp as _aiohttp  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    import aiohttp as _aiohttp  # noqa: F401  # pyright: ignore[reportUnusedImport]  # only checks the extra is installed
 except ImportError as exc:  # pragma: no cover - exercised in a subprocess
     raise ImportError(
         "reparo_playwright_bridge.testing needs the [fake] extra: "

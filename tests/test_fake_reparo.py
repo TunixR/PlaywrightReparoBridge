@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import subprocess
 import sys
 from typing import Any, cast
@@ -25,14 +26,14 @@ from reparo_playwright_bridge.testing import (
     Step,
 )
 
-type JSON = dict[str, Any]  # pyright: ignore[reportExplicitAny]  # decoded frames hold any JSON
+type JsonObject = dict[str, Any]  # pyright: ignore[reportExplicitAny]  # decoded frames hold any JSON
 
 WS_PATH = "/recovery/robot_exception/ws"
 CONTINUE = Continue("click_approve", [0])
 
 
-def valid_payload(**overrides: object) -> JSON:
-    payload: JSON = {
+def valid_payload(**overrides: object) -> JsonObject:
+    payload: JsonObject = {
         "task_name": "spending_approval",
         "platform": "playwright",
         "os": "Windows",
@@ -72,8 +73,8 @@ def valid_payload(**overrides: object) -> JSON:
     return payload
 
 
-def loads(frame: str | bytes) -> JSON:
-    return cast(JSON, json.loads(frame))
+def loads(frame: str | bytes) -> JsonObject:
+    return cast(JsonObject, json.loads(frame))
 
 
 def open_socket(reparo: FakeReparo, key: str | None = None) -> connect:
@@ -94,7 +95,7 @@ def is_ping(frame: str | bytes) -> bool:
     return isinstance(frame, str) and loads(frame).get("type") == "ping"
 
 
-async def next_json(ws: ClientConnection) -> JSON:
+async def next_json(ws: ClientConnection) -> JsonObject:
     """The next non-ping JSON frame."""
     while True:
         frame = await recv(ws)
@@ -192,7 +193,7 @@ async def test_the_fake_pings_while_the_script_plays() -> None:
 # --- Payload validation ---
 
 
-async def payload_answer(payload: object) -> tuple[JSON, int | None]:
+async def payload_answer(payload: object) -> tuple[JsonObject, int | None]:
     """Send one payload to a fake whose script would continue; return its answer and close code."""
     async with FakeReparo([CONTINUE]) as reparo, open_socket(reparo) as ws:
         await ws.send(payload if isinstance(payload, str) else json.dumps(payload))
@@ -206,7 +207,7 @@ async def payload_answer(payload: object) -> tuple[JSON, int | None]:
         pytest.param(valid_payload(surprise=1), id="unknown top-level field"),
         pytest.param(valid_payload(model="  "), id="blank model"),
         pytest.param(
-            {k: v for k, v in valid_payload().items() if k != "errored_act"},  # pyright: ignore[reportAny]
+            {k: v for k, v in valid_payload().items() if k != "errored_act"},  # pyright: ignore[reportAny]  # payload values are any JSON
             id="missing errored_act",
         ),
         pytest.param(
@@ -221,7 +222,7 @@ async def payload_answer(payload: object) -> tuple[JSON, int | None]:
             ),
             id="unknown capabilities field",
         ),
-        pytest.param("not json", id="not JSON"),
+        pytest.param(["not", "an", "object"], id="JSON but not an object"),
     ],
 )
 async def test_an_invalid_payload_gets_reparos_invalid_payload_error_and_close_1003(
@@ -234,6 +235,38 @@ async def test_an_invalid_payload_gets_reparos_invalid_payload_error_and_close_1
     assert isinstance(answer["content"], str)
     assert answer["content"]
     assert close_code == 1003
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [pytest.param("not json", id="text"), pytest.param(b"\x00", id="binary")],
+)
+async def test_a_payload_that_is_not_json_text_is_closed_with_1011_like_reparo(
+    frame: str | bytes,
+) -> None:
+    async with FakeReparo([CONTINUE]) as reparo, open_socket(reparo) as ws:
+        await ws.send(frame)
+        frames = await frames_until_closed(ws)
+
+    assert frames == []
+    assert ws.close_code == 1011
+    assert reparo.payloads == []
+
+
+async def test_a_rejected_payload_is_logged_without_its_values(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="reparo_playwright_bridge")
+    payload = valid_payload(variables="secret-variable-value")
+
+    answer, _ = await payload_answer(payload)
+
+    assert (
+        "secret-variable-value" in answer["content"]
+    )  # Reparo's own answer carries it
+    [record] = [r for r in caplog.records if "rejected the payload" in r.getMessage()]
+    assert "variables" in record.getMessage()
+    assert "secret-variable-value" not in caplog.text
 
 
 async def test_the_future_payload_fields_are_accepted() -> None:
@@ -388,15 +421,22 @@ async def test_report_result_is_recorded_for_a_recovery_id_the_fake_gave() -> No
         pytest.param(None, True, 401, id="no robot key"),
         pytest.param("not-the-key", True, 403, id="wrong robot key"),
         pytest.param("right", False, 404, id="unknown Recovery id"),
+        pytest.param("right", "not-a-uuid", 400, id="Recovery id not a UUID"),
     ],
 )
 async def test_report_result_is_refused_like_reparo(
-    key: str | None, known_id: bool, status: int
+    key: str | None, known_id: bool | str, status: int
 ) -> None:
     async with FakeReparo([CONTINUE]) as reparo:
         recovery_id = await recovery_id_from(reparo)
         sent_key = reparo.robot_key if key == "right" else key
-        sent_id = recovery_id if known_id else "00000000-0000-0000-0000-000000000000"
+        sent_id = (
+            known_id
+            if isinstance(known_id, str)
+            else recovery_id
+            if known_id
+            else "00000000-0000-0000-0000-000000000000"
+        )
         got = await report(reparo, sent_id, sent_key, {"success": False})
 
     assert got == status
