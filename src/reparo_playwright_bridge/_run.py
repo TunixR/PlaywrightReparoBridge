@@ -9,10 +9,11 @@ from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import cast
 
-from playwright.async_api import BrowserContext, Page
+from playwright.async_api import BrowserContext
 
+from reparo_playwright_bridge._checks import run_checks
 from reparo_playwright_bridge._classify import FailureKind, classify
-from reparo_playwright_bridge._context import EventContext, Variables
+from reparo_playwright_bridge._context import EventContext, Variables, active_page
 from reparo_playwright_bridge._definition import (
     Activity,
     EventNode,
@@ -76,12 +77,6 @@ def _check_inputs(
         )
 
 
-async def _active_page(context: BrowserContext) -> Page:
-    """The most recently opened page that is still open; a new page only if there is none."""
-    pages = [page for page in context.pages if not page.is_closed()]
-    return pages[-1] if pages else await context.new_page()
-
-
 class _Run:
     """One run of a Process: its case, its Variables and its log context."""
 
@@ -97,7 +92,11 @@ class _Run:
 
     async def walk(self, variables: Variables) -> RunResult:
         failure = await self._sequence(self.definition.root, variables, ())
-        return failure or RunResult(outcome="completed")
+        if failure is not None:
+            return failure
+        return await run_checks(
+            self.definition.checks, self.context, variables, self.case_id
+        )
 
     async def _sequence(
         self, sequence: SequenceNode, variables: Variables, passes: Passes
@@ -198,7 +197,7 @@ class _Run:
         run_log.debug("Event %s started", name, extra=extra)
         started = time.monotonic()
         try:
-            page = await _active_page(self.context)
+            page = await active_page(self.context)
             await event.fn(EventContext(page, variables))
         except Exception as exc:  # noqa: BLE001  # every raise is classified, never re-raised
             return self._event_failed(event, name, passes, exc, extra)

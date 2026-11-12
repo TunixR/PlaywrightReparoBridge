@@ -13,6 +13,8 @@ from reparo_playwright_bridge._definition import (
     JOIN_SUFFIX,
     NEXT_SUFFIX,
     Activity,
+    CheckFn,
+    CompletionCheck,
     Condition,
     EventFn,
     EventNode,
@@ -27,6 +29,22 @@ from reparo_playwright_bridge._model_export import ModelFormat, render
 
 def _slug(name: str) -> str:
     return re.sub(r"[\W_]+", "_", name.lower()).strip("_")
+
+
+def _check_grounded_name(decorator: str, name: object, example: str) -> None:
+    if not isinstance(name, str):  # catches a bare decorator, which passes the function
+        raise TypeError(
+            f"@p.{decorator} needs a grounded name, for example @p.{decorator}({example!r})"
+        )
+    if not name.strip():
+        raise ValueError(f"@p.{decorator} needs a non-empty grounded name")
+
+
+def _check_async(kind: str, fn: Callable[..., object]) -> str:
+    """The id of a decorated Event or Completion check: its function name, once it is async."""
+    if not inspect.iscoroutinefunction(fn):
+        raise TypeError(f"{kind} {fn.__name__} must be an async function")
+    return fn.__name__
 
 
 def _check_arm(keyword: str, cond: object, label: object) -> None:
@@ -112,17 +130,10 @@ class Process:
 
         The Event id is the function name.
         """
-        if not isinstance(name, str):  # pyright: ignore[reportUnnecessaryIsInstance]  # catches a bare @p.event
-            raise TypeError(  # pyright: ignore[reportUnreachable]
-                "@p.event needs a grounded name, for example @p.event('Click Approve')"
-            )
-        if not name.strip():
-            raise ValueError("@p.event needs a non-empty grounded name")
+        _check_grounded_name("event", name, "Click Approve")
 
         def register(fn: EventFn) -> EventFn:
-            event_id = fn.__name__
-            if not inspect.iscoroutinefunction(fn):
-                raise TypeError(f"Event {event_id} must be an async function")
+            event_id = _check_async("Event", fn)
             if self._activity is None:
                 raise ValueError(
                     f"Event {event_id} is outside any Activity; declare it inside `with p.activity(...)`"
@@ -138,6 +149,30 @@ class Process:
                     secret=secret,
                 )
             )
+            return fn
+
+        return register
+
+    def completion_check(self, name: str) -> Callable[[CheckFn], CheckFn]:
+        """Declare the decorated `async def <id>(ctx)` as a Completion check, with a grounded name.
+
+        Checks run in declaration order once the Process reaches its end. Each returns
+        `(True, None)` when met or `(False, reason)` when not. Declare them at the builder's top
+        level, outside every block.
+        """
+        _check_grounded_name(
+            "completion_check", name, "the remaining budget is as expected"
+        )
+
+        def register(fn: CheckFn) -> CheckFn:
+            check_id = _check_async("Completion check", fn)
+            if self._activity is not None or len(self._sequences) > 1:
+                raise ValueError(
+                    f"Completion check {check_id} is inside a block; "
+                    + "declare Completion checks at the builder's top level"
+                )
+            self._claim_id("Completion check", check_id)
+            self._definition.checks.append(CompletionCheck(check_id, name, fn))
             return fn
 
         return register
