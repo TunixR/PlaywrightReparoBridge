@@ -1,4 +1,4 @@
-"""FakeReparo: a real localhost server speaking Reparo's future recovery contract."""
+"""FakeReparo: a real localhost server speaking Reparo's recovery contract."""
 
 from __future__ import annotations
 
@@ -161,11 +161,11 @@ class FakeReparo:
         if first.type in _CLOSING:
             return
         decoded = _decode_json_text(first)
-        if decoded is None:  # Reparo decodes outside its error handling, and crashes
+        if decoded is None:
             testing_log.warning(
-                "FakeReparo got a payload that is not JSON text (close 1011)"
+                "FakeReparo rejected the payload (close 1003): not JSON text"
             )
-            _ = await ws.close(code=1011, message=b"Internal server error")
+            await self._reject_payload(ws, "The payload must be JSON text")
             return
         if isinstance(decoded, dict):
             self.payloads.append(cast(JsonObject, decoded))
@@ -176,10 +176,7 @@ class FakeReparo:
                 "FakeReparo rejected the payload (close 1003): %s",
                 _error_locations(exc),
             )
-            await ws.send_json(
-                {"type": "error", "code": INVALID_RECOVERY_PAYLOAD, "content": str(exc)}
-            )
-            _ = await ws.close(code=1003, message=b"Invalid recovery payload")
+            await self._reject_payload(ws, str(exc))
             return
         payload = cast(JsonObject, decoded)
         reader = asyncio.create_task(self._record_robot_frames(ws))
@@ -196,6 +193,12 @@ class FakeReparo:
         finally:
             _ = reader.cancel()
             _ = player.cancel()
+
+    async def _reject_payload(self, ws: web.WebSocketResponse, content: str) -> None:
+        await ws.send_json(
+            {"type": "error", "code": INVALID_RECOVERY_PAYLOAD, "content": content}
+        )
+        _ = await ws.close(code=1003, message=b"Invalid recovery payload")
 
     async def _record_robot_frames(self, ws: web.WebSocketResponse) -> None:
         """Record every frame the robot sends after its payload, until the socket closes."""
@@ -278,7 +281,7 @@ class FakeReparo:
         loop_iteration: list[int],
         variables: object,
     ) -> None:
-        """Send the future `done` (TunixR/Reparo#230 / #231) with a new Recovery id, then close."""
+        """Send `done` with a new Recovery id, then close."""
         recovery_id = str(uuid.uuid4())
         self._recovery_ids.add(recovery_id)
         content = {

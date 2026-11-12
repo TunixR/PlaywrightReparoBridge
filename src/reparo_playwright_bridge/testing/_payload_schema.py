@@ -1,9 +1,4 @@
-"""A copy of Reparo's `RecoveryPayload` (backend `templates/recovery_payload.py`), future contract.
-
-Kept in step with Reparo by hand. On top of today's schema it accepts the future fields:
-`model_event_id` on each UI log entry and on `errored_act` (TunixR/Reparo#230), `recovery_task`,
-and `capabilities` (TunixR/Reparo#217).
-"""
+"""A copy of Reparo's `RecoveryPayload` (backend `templates/recovery_payload.py`), kept in step by hand."""
 
 from __future__ import annotations
 
@@ -102,11 +97,21 @@ class RecoveryErroredAct(_Strict):
 
 
 class RobotCapabilities(_Strict):
-    """The robot's interaction modalities, most preferred first, and whether it has OCR."""
+    """The robot's interaction modalities, most preferred first, and whether it has OCR.
+
+    `details` only tells the agent how to write targets (e.g. `{"dom": {"selector_syntax": "css"}}`).
+    """
 
     modalities: list[Literal["vision", "dom", "a11y"]] = Field(min_length=1)
     ocr: bool = False
     details: dict[str, object] | None = None
+
+    @field_validator("modalities")
+    @classmethod
+    def _no_duplicates(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("modalities must not repeat")
+        return value
 
 
 class RecoveryPayload(_Strict):
@@ -118,7 +123,9 @@ class RecoveryPayload(_Strict):
     errored_act: RecoveryErroredAct
     model: str
     recovery_task: str | None = None
-    capabilities: RobotCapabilities | None = None
+    capabilities: RobotCapabilities = Field(
+        default_factory=lambda: RobotCapabilities(modalities=["vision"])
+    )
 
     @field_validator("model")
     @classmethod

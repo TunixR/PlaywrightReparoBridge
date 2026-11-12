@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 @dataclass(frozen=True)
 class Continue:
-    """End the Recovery: the future `done` naming where the robot continues.
+    """End the Recovery: `done` naming where the robot continues.
 
     `variables=None` echoes the payload's Variables back unchanged.
     """

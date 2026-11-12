@@ -25,6 +25,10 @@ from reparo_playwright_bridge.testing import (
     Silence,
     Step,
 )
+from reparo_playwright_bridge.testing._payload_schema import (
+    RecoveryPayload,
+    RobotCapabilities,
+)
 
 type JsonObject = dict[str, Any]  # pyright: ignore[reportExplicitAny]  # decoded frames hold any JSON
 
@@ -125,7 +129,7 @@ async def play(script: list[Step]) -> tuple[FakeReparo, list[str | bytes], int |
 # --- Serving and the robot key ---
 
 
-async def test_continue_sends_the_future_done_with_an_id_and_echoes_variables() -> None:
+async def test_continue_sends_done_with_an_id_and_echoes_variables() -> None:
     reparo, frames, close_code = await play([CONTINUE])
 
     [done] = [loads(frame) for frame in frames]
@@ -196,7 +200,9 @@ async def test_the_fake_pings_while_the_script_plays() -> None:
 async def payload_answer(payload: object) -> tuple[JsonObject, int | None]:
     """Send one payload to a fake whose script would continue; return its answer and close code."""
     async with FakeReparo([CONTINUE]) as reparo, open_socket(reparo) as ws:
-        await ws.send(payload if isinstance(payload, str) else json.dumps(payload))
+        await ws.send(
+            payload if isinstance(payload, str | bytes) else json.dumps(payload)
+        )
         [answer] = [loads(frame) for frame in await frames_until_closed(ws)]
     return answer, ws.close_code
 
@@ -222,7 +228,16 @@ async def payload_answer(payload: object) -> tuple[JsonObject, int | None]:
             ),
             id="unknown capabilities field",
         ),
+        pytest.param(
+            valid_payload(capabilities={"modalities": []}), id="no modalities"
+        ),
+        pytest.param(
+            valid_payload(capabilities={"modalities": ["dom", "dom"]}),
+            id="duplicate modalities",
+        ),
         pytest.param(["not", "an", "object"], id="JSON but not an object"),
+        pytest.param("not json", id="text that is not JSON"),
+        pytest.param(b"\x00", id="binary frame"),
     ],
 )
 async def test_an_invalid_payload_gets_reparos_invalid_payload_error_and_close_1003(
@@ -235,22 +250,6 @@ async def test_an_invalid_payload_gets_reparos_invalid_payload_error_and_close_1
     assert isinstance(answer["content"], str)
     assert answer["content"]
     assert close_code == 1003
-
-
-@pytest.mark.parametrize(
-    "frame",
-    [pytest.param("not json", id="text"), pytest.param(b"\x00", id="binary")],
-)
-async def test_a_payload_that_is_not_json_text_is_closed_with_1011_like_reparo(
-    frame: str | bytes,
-) -> None:
-    async with FakeReparo([CONTINUE]) as reparo, open_socket(reparo) as ws:
-        await ws.send(frame)
-        frames = await frames_until_closed(ws)
-
-    assert frames == []
-    assert ws.close_code == 1011
-    assert reparo.payloads == []
 
 
 async def test_a_rejected_payload_is_logged_without_its_values(
@@ -269,7 +268,7 @@ async def test_a_rejected_payload_is_logged_without_its_values(
     assert "secret-variable-value" not in caplog.text
 
 
-async def test_the_future_payload_fields_are_accepted() -> None:
+async def test_the_optional_payload_fields_are_accepted() -> None:
     entry = {**valid_payload()["ui_log"][0], "model_event_id": "open_requests"}
     errored = {**valid_payload()["errored_act"], "model_event_id": "click_approve"}
     payload = valid_payload(
@@ -282,6 +281,12 @@ async def test_the_future_payload_fields_are_accepted() -> None:
     answer, _ = await payload_answer(payload)
 
     assert answer["type"] == "done"
+
+
+def test_absent_capabilities_default_to_vision_without_ocr() -> None:
+    payload = RecoveryPayload.model_validate(valid_payload())
+
+    assert payload.capabilities == RobotCapabilities(modalities=["vision"], ocr=False)
 
 
 # --- Script steps ---
