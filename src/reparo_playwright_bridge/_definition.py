@@ -6,9 +6,11 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from reparo_playwright_bridge._context import EventContext
+from reparo_playwright_bridge._context import CheckContext, EventContext
 
 EventFn = Callable[[EventContext], Awaitable[None]]
+CheckFn = Callable[[CheckContext], Awaitable[object]]
+"""A Completion check: met is `(True, None)`, unmet is `(False, reason)`; anything else crashes it."""
 
 
 @dataclass(frozen=True)
@@ -70,11 +72,22 @@ class XorNode:
 Node = EventNode | LoopNode | XorNode
 
 
+@dataclass(frozen=True)
+class CompletionCheck:
+    id: str
+    """The function name."""
+    name: str
+    """The grounded name."""
+    fn: CheckFn
+
+
 @dataclass
 class ProcessDefinition:
     name: str
     inputs: Mapping[str, type]
     root: SequenceNode = field(default_factory=SequenceNode)
+    checks: list[CompletionCheck] = field(default_factory=list)
+    """The Completion checks, in declaration order."""
 
 
 ELSE_LABEL = "otherwise"

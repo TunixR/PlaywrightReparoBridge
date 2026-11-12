@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import xmlschema
 
-from reparo_playwright_bridge import EventContext, Process
+from reparo_playwright_bridge import CheckContext, EventContext, Process
 
 BPMN = "{http://www.omg.org/spec/BPMN/20100524/MODEL}"
 
@@ -622,3 +622,66 @@ def test_bpmn_validates_against_the_bpmn_2_0_schema(
     errors = [str(e) for e in bpmn_schema.iter_errors(make().to_model("bpmn"))]
 
     assert errors == []
+
+
+# --------------------------------------------------------------------------- completion checks
+
+
+async def _met(_ctx: CheckContext) -> tuple[bool, str | None]:
+    return True, None
+
+
+def test_a_completion_check_at_the_top_level_is_accepted() -> None:
+    p = greet_process()
+
+    _ = p.completion_check("the greeting is shown")(_met)
+
+    assert p.to_model("compact") == greet_process().to_model("compact"), (
+        "a Completion check is never part of the Process model"
+    )
+
+
+def test_a_completion_check_inside_an_activity_is_rejected() -> None:
+    p = Process("p")
+    with p.activity("A"), pytest.raises(ValueError, match="top level"):
+        _ = p.completion_check("met")(_met)
+
+
+@pytest.mark.parametrize("block", ["for_each", "if_", "else_"])
+def test_a_completion_check_inside_a_block_is_rejected(block: str) -> None:
+    p = Process("p")
+    with pytest.raises(ValueError, match="top level"):
+        if block == "for_each":
+            with p.for_each("loop", over="items", as_="item"):
+                _ = p.completion_check("met")(_met)
+        else:
+            with p.if_("gate", lambda _v: True, label="always"):
+                if block == "if_":
+                    _ = p.completion_check("met")(_met)
+            with p.else_():
+                _ = p.completion_check("met")(_met)
+
+
+def test_a_completion_check_needs_a_grounded_name() -> None:
+    p = Process("p")
+    with pytest.raises(TypeError, match="grounded name"):
+        _ = p.completion_check(_met)  # pyright: ignore[reportArgumentType]
+    with pytest.raises(ValueError, match="grounded name"):
+        _ = p.completion_check("  ")
+
+
+def test_a_completion_check_must_be_async() -> None:
+    p = Process("p")
+
+    def not_async(_ctx: CheckContext) -> tuple[bool, str | None]:
+        return True, None
+
+    with pytest.raises(TypeError, match="not_async"):
+        _ = p.completion_check("met")(not_async)  # pyright: ignore[reportArgumentType]
+
+
+def test_completion_check_ids_are_unique() -> None:
+    p = Process("p")
+    _ = p.completion_check("first")(_met)
+    with pytest.raises(ValueError, match="_met"):
+        _ = p.completion_check("second")(_met)
