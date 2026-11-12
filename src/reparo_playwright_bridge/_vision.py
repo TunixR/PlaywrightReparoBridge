@@ -164,6 +164,8 @@ def _point(
 ) -> tuple[float, float]:
     """The CSS-pixel point the `[x, y]` or `[x1, y1, x2, y2]` box in `inputs[field]` aims at.
 
+    Assumes absolute coordinates in the viewport's coordinate space: CSS pixels from the
+    viewport's top-left corner, the same space as `observe`'s screenshot, not the page's.
     A box is reduced to its centre. On each axis, values all ≤ 1.0 are a fraction of the viewport.
     """
     box = inputs.get(field)
