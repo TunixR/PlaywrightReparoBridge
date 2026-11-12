@@ -8,6 +8,8 @@ from typing import Literal
 
 from reparo_playwright_bridge._definition import (
     ELSE_LABEL,
+    JOIN_SUFFIX,
+    NEXT_SUFFIX,
     EventNode,
     LoopNode,
     ProcessDefinition,
@@ -89,7 +91,7 @@ class _BpmnGraph:
                     exits = [(node.id, None)]
                 case LoopNode():
                     # A head merge, the body, then a split that goes back or leaves.
-                    tail = f"{node.id}_next"
+                    tail = node.id + NEXT_SUFFIX
                     self.node(
                         "exclusiveGateway",
                         node.id,
@@ -103,7 +105,7 @@ class _BpmnGraph:
                     self.flows.append((tail, node.id, f"next {node.as_}"))
                     exits = [(tail, f"all {node.over} done")]
                 case XorNode():
-                    join = f"{node.id}_join"
+                    join = node.id + JOIN_SUFFIX
                     self.node("exclusiveGateway", node.id, gatewayDirection="Diverging")
                     self.connect(exits, node.id)
                     arm_exits: Exits = []

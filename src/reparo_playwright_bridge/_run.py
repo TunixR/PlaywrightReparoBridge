@@ -173,7 +173,7 @@ class _Run:
         )
         return RunResult(
             outcome="local",
-            reason=f"Process bug: {where}: {summary}",
+            reason=f"{FailureKind.PROCESS_BUG.value}: {where}: {summary}",
             failure=Failure(type="local"),
         )
 

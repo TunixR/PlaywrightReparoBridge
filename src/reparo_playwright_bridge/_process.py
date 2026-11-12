@@ -10,6 +10,8 @@ from types import MappingProxyType
 
 from reparo_playwright_bridge._definition import (
     ELSE_LABEL,
+    JOIN_SUFFIX,
+    NEXT_SUFFIX,
     Activity,
     Condition,
     EventFn,
@@ -140,9 +142,7 @@ class Process:
         return register
 
     @contextmanager
-    def for_each(
-        self, id: str, *, over: str, as_: str
-    ) -> Generator[None]:  # the spec's name
+    def for_each(self, id: str, *, over: str, as_: str) -> Generator[None]:
         """Run the block once per item of the list Variable `over`, binding the item to `as_`.
 
         Pass *i* binds `vars[as_] = vars[over][i]`. Loops may nest.
@@ -154,23 +154,21 @@ class Process:
             raise ValueError(
                 f"Loop {id!r} binds its item to the list it walks ({over!r})"
             )
-        self._claim_id("Loop", id, generates="next")
+        self._claim_id("Loop", id, generates=NEXT_SUFFIX)
         loop = LoopNode(id, over, as_)
         self._sequences[-1].nodes.append(loop)
         with self._block(loop.body):
             yield
 
     @contextmanager
-    def if_(
-        self, id: str, cond: Condition, *, label: str
-    ) -> Generator[None]:  # the spec's name
+    def if_(self, id: str, cond: Condition, *, label: str) -> Generator[None]:
         """Open an XOR gateway: its first arm, which runs if `cond(vars)` holds.
 
         Follow it with any number of `elif_` and an optional `else_`; the first true arm wins.
         `cond` is a pure function of the Variables, which it gets read-only.
         """
         _check_arm("if_", cond, label)
-        self._claim_id("Gateway", id, generates="join")
+        self._claim_id("Gateway", id, generates=JOIN_SUFFIX)
         xor = XorNode(id)
         self._sequences[-1].nodes.append(xor)
         with self._arm(xor, label, cond):
@@ -227,14 +225,14 @@ class Process:
     def _claim_id(self, kind: str, node_id: str, *, generates: str = "") -> None:
         """Event, gateway and loop ids share one namespace across the Process.
 
-        A gateway or loop also reserves the id its closing BPMN gateway gets (`<id>_<generates>`).
+        A gateway or loop also reserves the id its closing BPMN gateway gets (the id plus `generates`).
         """
         if not isinstance(node_id, str) or not node_id.isidentifier():  # pyright: ignore[reportUnnecessaryIsInstance]  # runtime guard
             raise ValueError(f"{kind} id {node_id!r} must be a Python identifier")
         claims = {node_id: f"{kind} {node_id}"}
         if generates:
-            claims[f"{node_id}_{generates}"] = (
-                f"the {generates} gateway of {kind} {node_id}"
+            claims[node_id + generates] = (
+                f"the BPMN gateway {node_id}{generates} of {kind} {node_id}"
             )
         for claimed, owner in claims.items():
             if claimed in self._ids:

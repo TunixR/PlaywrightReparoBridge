@@ -79,3 +79,8 @@ class ProcessDefinition:
 
 ELSE_LABEL = "otherwise"
 """The arm label of an `else_`."""
+
+JOIN_SUFFIX = "_join"
+"""The BPMN id of an XOR's join gateway is the gateway id plus this."""
+NEXT_SUFFIX = "_next"
+"""The BPMN id of a loop's tail split is the loop id plus this."""
