@@ -4,7 +4,8 @@ Playwright connector for [Reparo](https://reparo.tunixr.com): run a browser proc
 activities, send failures to Reparo's recovery WebSocket, and continue the process from where
 Reparo hands it back.
 
-Status: planning. See `.scratch/playwright-bridge/map.md`.
+Status: planning. See the map issue
+[Playwright bridge for Reparo: spec](https://github.com/TunixR/PlaywrightReparoBridge/issues/1).
 
 ## Development
 
