@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
 from reparo_playwright_bridge._context import EventContext
 
@@ -33,7 +34,40 @@ class EventNode:
 
 @dataclass
 class SequenceNode:
-    nodes: list[EventNode] = field(default_factory=list)
+    nodes: list[Node] = field(default_factory=list)
+
+
+@dataclass
+class LoopNode:
+    """A `for_each`: its body runs once per item of `vars[over]`, with `vars[as_]` bound to it."""
+
+    id: str
+    over: str
+    as_: str
+    body: SequenceNode = field(default_factory=SequenceNode)
+
+
+Condition = Callable[[Mapping[str, Any]], object]  # pyright: ignore[reportExplicitAny]  # Variables hold any value
+"""A pure function of the Variables; its truth picks an XOR arm."""
+
+
+@dataclass
+class XorArm:
+    label: str
+    condition: Condition | None
+    """None for the `else_` arm."""
+    body: SequenceNode = field(default_factory=SequenceNode)
+
+
+@dataclass
+class XorNode:
+    """An n-way exclusive gateway: the first arm whose condition holds runs."""
+
+    id: str
+    arms: list[XorArm] = field(default_factory=list)
+
+
+Node = EventNode | LoopNode | XorNode
 
 
 @dataclass
@@ -41,3 +75,12 @@ class ProcessDefinition:
     name: str
     inputs: Mapping[str, type]
     root: SequenceNode = field(default_factory=SequenceNode)
+
+
+ELSE_LABEL = "otherwise"
+"""The arm label of an `else_`."""
+
+JOIN_SUFFIX = "_join"
+"""The BPMN id of an XOR's join gateway is the gateway id plus this."""
+NEXT_SUFFIX = "_next"
+"""The BPMN id of a loop's tail split is the loop id plus this."""
