@@ -4,7 +4,11 @@ version = "0.1.0"
 description = "Playwright connector for Reparo: run block-structured browser processes and hand failures to Reparo for recovery."
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "playwright>=1.65.1",
+    "pydantic>=2.14.3",
+    "websockets>=17.4",
+]
 
 [build-system]
 requires = ["uv_build>=0.13.7,<0.14.0"]
@@ -14,5 +18,12 @@ build-backend = "uv_build"
 dev = [
     "basedpyright>=1.40.2",
     "pytest>=9.2.0",
+    "pytest-asyncio>=1.4.1.post1",
     "ruff>=0.17.4",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"

@@ -16,4 +16,5 @@ GitHub Issues on `TunixR/PlaywrightReparoBridge`, driven with `gh`. Conventions,
 
 ## Tooling
 
-`uv sync`, `uv run pytest`, `uv run ruff check`, `uv run basedpyright`.
+`uv sync`, `uv run playwright install chromium` (once; tests drive real headless Chromium),
+`uv run pytest`, `uv run ruff check`, `uv run ruff format`, `uv run basedpyright`.
