@@ -68,6 +68,10 @@ stopped the run, with a short description of that failure.
 observes and acts on the browser until it is back in a state the process can continue from, then
 hands control back.
 
+**Recovery id**: The identifier Reparo gives a **Recovery** once it has run, by which the
+Recovery is found in Reparo and its result reported back.
+_Avoid_: exception id, robot exception id.
+
 **Recovery task**: A description, written by the process author, of what recovering an
 **Activity** should achieve, offered to Reparo as a preferred plan.
 _Avoid_: recovery hint.
