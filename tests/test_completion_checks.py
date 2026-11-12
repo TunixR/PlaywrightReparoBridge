@@ -210,7 +210,7 @@ async def _ui_error(ctx: CheckContext) -> tuple[bool, str | None]:
         (_returns_unmet_without_reason, "(bool, NoneType)"),
         (_returns_met_with_reason, "(bool, str)"),
         (_returns_truthy_int, "(int, NoneType)"),
-        (_ui_error, "Timeout"),
+        (_ui_error, "Timed out after 200 ms"),
     ],
 )
 async def test_a_crashing_check_is_a_process_bug_that_stops_the_remaining_checks(

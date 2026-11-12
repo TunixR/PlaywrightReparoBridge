@@ -22,9 +22,16 @@ from reparo_playwright_bridge._definition import (
     SequenceNode,
     XorNode,
 )
-from reparo_playwright_bridge._log import run_log
+from reparo_playwright_bridge._log import recovery_log, run_log
 from reparo_playwright_bridge._modality import Modality
+from reparo_playwright_bridge._payload import (
+    ErroredActivity,
+    LoggedEvent,
+    build_payload,
+)
 from reparo_playwright_bridge._process import Process, definition_of
+from reparo_playwright_bridge._protocol import Ended, recover
+from reparo_playwright_bridge._report import report_result
 from reparo_playwright_bridge._result import Failure, RunResult
 from reparo_playwright_bridge._settings import ReparoSettings
 
@@ -81,11 +88,19 @@ class _Run:
     """One run of a Process: its case, its Variables and its log context."""
 
     def __init__(
-        self, definition: ProcessDefinition, context: BrowserContext, case_id: CaseId
+        self,
+        definition: ProcessDefinition,
+        context: BrowserContext,
+        settings: ReparoSettings,
+        case_id: CaseId,
     ) -> None:
         self.definition: ProcessDefinition = definition
         self.context: BrowserContext = context
+        self.settings: ReparoSettings = settings
         self.case_id: CaseId = case_id
+
+        self._ui_log: list[LoggedEvent] = []
+        """Every Logged event since run start, oldest first."""
 
         self._entered: tuple[Activity, Passes] | None = None
         """The Activity and pass of the last Event run, to log each Activity entered once per pass."""
@@ -196,11 +211,13 @@ class _Run:
         name = event.id + _suffix(passes)
         run_log.debug("Event %s started", name, extra=extra)
         started = time.monotonic()
+        snapshot = copy.deepcopy(variables)
         try:
             page = await active_page(self.context)
             await event.fn(EventContext(page, variables))
         except Exception as exc:  # noqa: BLE001  # every raise is classified, never re-raised
-            return self._event_failed(event, name, passes, exc, extra)
+            return await self._event_failed(event, name, passes, exc, extra, snapshot)
+        self._ui_log.append(LoggedEvent.now(len(self._ui_log) + 1, event, passes))
         run_log.debug(
             "Event %s ended in %.0f ms",
             name,
@@ -209,30 +226,18 @@ class _Run:
         )
         return None
 
-    def _event_failed(
+    async def _event_failed(
         self,
         event: EventNode,
         name: str,
         passes: Passes,
         exc: Exception,
         extra: dict[str, object],
+        snapshot: Variables,
     ) -> RunResult:
         classified = classify(exc)
         failure = Failure(type="local", event_id=event.id, loop_iteration=list(passes))
-        if classified.kind is FailureKind.UI:
-            run_log.debug(
-                "Event %s failed: UI failure", name, exc_info=exc, extra=extra
-            )
-            run_log.warning(
-                "Event %s failed: UI failure (%s: %s); not handed to Reparo",
-                name,
-                classified.error_code,
-                classified.summary,
-                extra=extra,
-            )
-            failure.error_code = classified.error_code
-            failure.error_description = classified.summary
-        else:
+        if classified.kind is not FailureKind.UI:
             run_log.error(
                 "Event %s failed: %s (%s)",
                 name,
@@ -241,7 +246,88 @@ class _Run:
                 exc_info=exc,
                 extra=extra,
             )
-        return RunResult(outcome="local", reason=classified.reason, failure=failure)
+            return RunResult(outcome="local", reason=classified.reason, failure=failure)
+        failure.error_code = classified.error_code
+        failure.error_description = classified.summary
+        run_log.debug("Event %s failed: UI failure", name, exc_info=exc, extra=extra)
+        # An Event can't opt back into Recovery inside an opted-out Activity.
+        if not event.activity.recoverable:
+            why = f"Activity {event.activity.name!r} is not recoverable"
+        elif not event.recoverable:
+            why = f"Event {event.id} is not recoverable"
+        else:
+            return await self._recover(event, name, passes, failure, extra, snapshot)
+        run_log.warning(
+            "Event %s failed: UI failure (%s: %s); not handed to Reparo: %s",
+            name,
+            classified.error_code,
+            classified.summary,
+            why,
+            extra=extra,
+        )
+        return RunResult(
+            outcome="local",
+            reason=f"{classified.reason} (not handed to Reparo: {why})",
+            failure=failure,
+        )
+
+    async def _recover(
+        self,
+        event: EventNode,
+        name: str,
+        passes: Passes,
+        failure: Failure,
+        extra: dict[str, object],
+        snapshot: Variables,
+    ) -> RunResult:
+        """Hand the UI failure to Reparo as the run's one Recovery."""
+        code, description = failure.error_code or "", failure.error_description or ""
+        recovery_log.info(
+            "Recovery started: Event %s failed (%s: %s)",
+            name,
+            code,
+            description,
+            extra=extra,
+        )
+        errored = ErroredActivity(
+            len(self._ui_log) + 1, event, passes, code, description
+        )
+        payload = build_payload(
+            self.definition,
+            self.settings,
+            self.case_id,
+            self._ui_log,
+            errored,
+            snapshot,
+        )
+        answer = await recover(self.settings, payload, extra)
+        if isinstance(answer, Ended):
+            failure.type = answer.failure_type
+            return RunResult(
+                outcome=answer.outcome, reason=answer.reason, failure=failure
+            )
+        recovery_log.info(
+            "done received: Recovery %s, success %s",
+            answer.recovery_id,
+            str(answer.content.success).lower(),
+            extra=extra,
+        )
+        if not answer.content.success:
+            failure.type = "recovery_declined"
+            return RunResult(
+                outcome="recovery_declined",
+                reason="Reparo declined the Recovery",
+                failure=failure,
+                recovery_id=answer.recovery_id,
+            )
+        # Resuming at Reparo's Continuation comes with the Continuation resolver.
+        failure.type = "continuation_rejected"
+        return RunResult(
+            outcome="continuation_rejected",
+            reason="resuming after a Recovery is not supported yet",
+            failure=failure,
+            recovery_id=answer.recovery_id,
+        )
 
 
 async def run(
@@ -304,6 +390,11 @@ async def _run(
         return RunResult(
             outcome="local", reason=failure.reason, failure=Failure(type="local")
         )
-    return await _Run(definition, context, resolved).walk(
+    result = await _Run(definition, context, reparo, resolved).walk(
         copy.deepcopy(dict(variables))
     )
+    if result.recovery_id is not None:
+        await report_result(
+            reparo, result.recovery_id, result.outcome == "completed", extra
+        )
+    return result
