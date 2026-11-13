@@ -284,6 +284,8 @@ async def recover_with(
 async def test_requests_are_routed_by_observation_modality_and_target_kind(
     context: BrowserContext, site: FixtureServer
 ) -> None:
+    # Both are test doubles: the bridge ships no a11y Modality yet. Each answers success and
+    # tags its reply with its name, so the replies show which Modality served each request.
     vision = ScriptedModality("vision", frozenset({"coordinates"}), observation=b"jpeg")
     a11y = ScriptedModality("a11y", frozenset({"a11y_selector"}))
     script: list[Step] = [

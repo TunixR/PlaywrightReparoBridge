@@ -208,13 +208,13 @@ class FakeReparo:
             _ = await asyncio.wait(
                 {reader, player}, return_when=asyncio.FIRST_COMPLETED
             )
-            if reader.done():  # the robot closed first: nothing left to play to
-                _ = player.cancel()
-            elif (exc := player.exception()) is not None:
+            if player.done() and (exc := player.exception()) is not None:
                 # A broken script stays loud: it fails the `async with`, and ends the Recovery.
                 self.problems.append(f"the script broke: {exc}")
                 testing_log.error("FakeReparo's script broke: %s", exc)
                 _ = await ws.close()
+            elif reader.done():  # the robot closed first: nothing left to play to
+                _ = player.cancel()
             _ = await asyncio.gather(reader, player, return_exceptions=True)
         finally:
             _ = reader.cancel()

@@ -9,8 +9,12 @@ from types import MappingProxyType
 
 @dataclass(frozen=True)
 class Locate:
-    """A target resolved just before sending: the centre of `selector`'s bounding box, in CSS
-    pixels, on the active page. A selector that matches nothing fails the script loudly."""
+    """A point target resolved just before sending: the centre of `selector`'s bounding box, in
+    CSS pixels, on the active page. A selector that matches nothing fails the script loudly.
+
+    It stands in for the coordinates Reparo reads off a screenshot, so it only makes sense for
+    `coordinates` targeting (`start_box` / `end_box`), which the vision Modality owns.
+    """
 
     selector: str
 

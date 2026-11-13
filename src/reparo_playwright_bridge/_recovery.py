@@ -59,10 +59,10 @@ class RecoveryHandler:
         return next((m for m in self.modalities if kind in m.target_kinds), None)
 
     def recovering(
-        self, context: BrowserContext, extra: Mapping[str, object]
+        self, context: BrowserContext, log_fields: Mapping[str, object]
     ) -> RecoverySession:
-        """A session serving one Recovery on `context`."""
-        return RecoverySession(self, context, extra)
+        """A session serving one Recovery on `context`, logging with `log_fields`."""
+        return RecoverySession(self, context, log_fields)
 
 
 class RecoverySession:
@@ -77,11 +77,13 @@ class RecoverySession:
         self,
         handler: RecoveryHandler,
         context: BrowserContext,
-        extra: Mapping[str, object],
+        log_fields: Mapping[str, object],
     ) -> None:
         self._handler: RecoveryHandler = handler
         self._context: BrowserContext = context
-        self._extra: dict[str, object] = dict(extra)
+        self._log_fields: dict[str, object] = dict(log_fields)
+        """Where in the run this Recovery is (`case_id`, `event_id`, `activity_id`,
+        `loop_iteration`), attached to every log record it writes."""
         page = latest_open_page(context)
         self._viewport: ViewportSize | None = (
             None if page is None else page.viewport_size
@@ -96,7 +98,7 @@ class RecoverySession:
 
     def _cannot_serve[R: Reply](self, what: str, reply: R) -> R:
         recovery_log.warning(
-            "cannot serve Reparo's request: %s", what, extra=self._extra
+            "cannot serve Reparo's request: %s", what, extra=self._log_fields
         )
         return reply
 
@@ -142,10 +144,12 @@ class RecoverySession:
                 modality_name,
                 _viewport_text(page.viewport_size),
                 len(observation),
-                extra=self._extra,
+                extra=self._log_fields,
             )
         else:
-            recovery_log.debug("%s Observation sent", modality_name, extra=self._extra)
+            recovery_log.debug(
+                "%s Observation sent", modality_name, extra=self._log_fields
+            )
         return observation
 
     async def act(self, content: object) -> Mapping[str, object]:
@@ -177,7 +181,7 @@ class RecoverySession:
             "success"
             if reply.get("success") is True
             else f"failed ({reply.get('error')})",
-            extra=self._extra,
+            extra=self._log_fields,
         )
         return reply
 
