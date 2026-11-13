@@ -20,6 +20,7 @@ from reparo_playwright_bridge._classify import FailureKind
 from reparo_playwright_bridge._context import latest_open_page
 from reparo_playwright_bridge._log import recovery_log
 from reparo_playwright_bridge._payload import Payload
+from reparo_playwright_bridge._recovery import VISION, RecoveryHandler, RecoverySession
 from reparo_playwright_bridge._result import FailedOutcome, FailureType
 from reparo_playwright_bridge._settings import ReparoSettings
 
@@ -91,12 +92,15 @@ async def recover(
     extra: Mapping[str, object],
     *,
     context: BrowserContext,
+    handler: RecoveryHandler,
     recovery: str,
 ) -> Done | Ended:
     """Connect, send `payload`, and serve Reparo until it ends the Recovery.
 
     Connecting is retried; once the payload is sent the bridge never reconnects, so a reconnect
-    can never start a second Recovery. The page or `context` going away ends the Recovery as an
+    can never start a second Recovery. `handler` serves Reparo's Observations and Recovery
+    actions; each reply is the next frame the bridge sends. The page or `context` going away
+    ends the Recovery as an
     Environment failure; `recovery` names the Recovery in that reason (`Event <id> #<pass>`).
     If it goes away before the payload is sent, no payload is sent.
     """
@@ -118,7 +122,8 @@ async def recover(
                     extra=dict(extra),
                 )
                 timer = _Timer(settings.silence_timeout, settings.recovery_deadline)
-                return await _serve(ws, timer, watch, recovery, extra)
+                session = handler.recovering(context, extra)
+                return await _serve(ws, timer, watch, session, recovery, extra)
             except ConnectionClosed as closed:
                 if closed.rcvd is not None and closed.rcvd.code == REJECTED_KEY_CLOSE:
                     return Ended.key_rejected(f"close {REJECTED_KEY_CLOSE}")
@@ -295,6 +300,7 @@ async def _serve(
     ws: ClientConnection,
     timer: _Timer,
     watch: _EnvironmentWatch,
+    session: RecoverySession,
     recovery: str,
     extra: Mapping[str, object],
 ) -> Done | Ended:
@@ -316,6 +322,13 @@ async def _serve(
         match kind:
             case "ping":
                 continue
+            case "screenshot":
+                await _send_reply(ws, await session.observe(VISION))
+            case "observe":
+                modality = (message or {}).get("modality", VISION)
+                await _send_reply(ws, await session.observe(str(modality)))
+            case "action":
+                await _send_reply(ws, await session.act((message or {}).get("content")))
             case "done":
                 return _done(message or {})
             case "error":
@@ -332,6 +345,12 @@ async def _serve(
                         {"success": False, "error": f"unsupported message type {shown}"}
                     )
                 )
+
+
+async def _send_reply(
+    ws: ClientConnection, reply: bytes | Mapping[str, object]
+) -> None:
+    await ws.send(reply if isinstance(reply, bytes) else json.dumps(reply))
 
 
 async def _abort(

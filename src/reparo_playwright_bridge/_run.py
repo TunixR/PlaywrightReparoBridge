@@ -10,6 +10,7 @@ from types import MappingProxyType
 from typing import cast
 
 from playwright.async_api import BrowserContext
+from playwright.async_api import Error as PlaywrightError
 
 from reparo_playwright_bridge._checks import run_checks
 from reparo_playwright_bridge._classify import (
@@ -45,13 +46,16 @@ from reparo_playwright_bridge._payload import (
 )
 from reparo_playwright_bridge._process import Process, definition_of
 from reparo_playwright_bridge._protocol import Ended, recover
+from reparo_playwright_bridge._recovery import RecoveryHandler
 from reparo_playwright_bridge._report import report_result
 from reparo_playwright_bridge._result import Failure, LocalOutcome, RunResult
 from reparo_playwright_bridge._settings import ReparoSettings
+from reparo_playwright_bridge._vision import VisionModality
 
 CaseId = str | int
 Passes = tuple[int, ...]
 """The pass of each enclosing loop, outermost first."""
+DEFAULT_MODALITIES: tuple[Modality, ...] = (VisionModality(),)
 _Stop = RunResult | Resume
 """Why a walk stopped early: the run ended, or Reparo's Continuation moved it elsewhere."""
 
@@ -95,6 +99,29 @@ def _check_inputs(
         )
 
 
+async def _recovery_handler(
+    modalities: Sequence[Modality], context: BrowserContext
+) -> RecoveryHandler:
+    """The run's Recovery handler, once the Modalities can serve a Recovery on `context`."""
+    try:
+        handler = RecoveryHandler(modalities)
+    except ValueError as exc:
+        raise _LocalFailure(f"Modalities not usable: {exc}") from exc
+    if not handler.usable:
+        loaded = ", ".join(m.name for m in modalities) or "none"
+        raise _LocalFailure(f"no usable Modality is loaded (loaded: {loaded})")
+    if handler.needs_fixed_viewport:
+        try:
+            page = await active_page(context)
+        except PlaywrightError:  # the first Event reports the Environment failure
+            return handler
+        if page.viewport_size is None:
+            raise _LocalFailure(
+                "the browser context has no fixed viewport, which the vision Modality needs"
+            )
+    return handler
+
+
 class _Run:
     """One run of a Process: its case, its Variables and its log context."""
 
@@ -104,11 +131,13 @@ class _Run:
         context: BrowserContext,
         settings: ReparoSettings,
         case_id: CaseId,
+        handler: RecoveryHandler,
     ) -> None:
         self.definition: ProcessDefinition = definition
         self.context: BrowserContext = context
         self.settings: ReparoSettings = settings
         self.case_id: CaseId = case_id
+        self.handler: RecoveryHandler = handler
 
         self._ui_log: list[LoggedEvent] = []
         """Every Logged event since run start, oldest first."""
@@ -414,12 +443,14 @@ class _Run:
             self._ui_log,
             errored,
             snapshot,
+            self.handler.capabilities,
         )
         answer = await recover(
             self.settings,
             payload,
             extra,
             context=self.context,
+            handler=self.handler,
             recovery=f"Event {name}",
         )
         if isinstance(answer, Ended):
@@ -492,9 +523,12 @@ async def run(
     reparo: ReparoSettings,
     case_id: CaseId | Callable[[], CaseId],
     variables: Mapping[str, object] | None = None,
-    modalities: Sequence[Modality] = (),
+    modalities: Sequence[Modality] = DEFAULT_MODALITIES,
 ) -> RunResult:
     """Run `process` on the author's `context` and return how it ended.
+
+    `modalities` are the ways Reparo may see and act on the browser during a Recovery, most
+    preferred first; their names must be unique.
 
     Never raises for a failed run, and never closes the context or any of its pages.
     """
@@ -539,9 +573,10 @@ async def _run(
             extra=extra,
         )
         _check_inputs(definition, variables)
+        handler = await _recovery_handler(modalities, context)
     except _LocalFailure as failure:
         return RunResult.failed("local", failure.reason)
-    result = await _Run(definition, context, reparo, resolved).walk(
+    result = await _Run(definition, context, reparo, resolved, handler).walk(
         copy.deepcopy(dict(variables))
     )
     # Every run that started a Recovery gets here, whatever its outcome, so Reparo hears back

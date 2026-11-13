@@ -92,6 +92,7 @@ def build_payload(
     ui_log: list[LoggedEvent],
     errored: ErroredActivity,
     variables: Variables,
+    capabilities: JsonObject,
 ) -> Payload:
     """The Recovery payload, in Reparo's v1 recovery contract."""
     entries: list[JsonObject] = [
@@ -125,6 +126,7 @@ def build_payload(
         "ui_log": entries,
         "errored_act": errored_act,
         "model": model,
+        "capabilities": capabilities,
     }
     if errored.event.activity.recovery_task is not None:
         body["recovery_task"] = errored.event.activity.recovery_task

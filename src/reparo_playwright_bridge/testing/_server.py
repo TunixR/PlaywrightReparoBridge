@@ -16,13 +16,17 @@ from aiohttp import WSMessage, WSMsgType, web
 from playwright.async_api import BrowserContext
 from pydantic import ValidationError
 
+from reparo_playwright_bridge._context import latest_open_page
 from reparo_playwright_bridge._log import testing_log
 from reparo_playwright_bridge.testing._payload_schema import RecoveryPayload
 from reparo_playwright_bridge.testing._steps import (
     TERMINAL_STEPS,
+    Act,
     Close,
     Continue,
     Fail,
+    Locate,
+    Observe,
     SendError,
     SendRaw,
     Silence,
@@ -32,9 +36,15 @@ from reparo_playwright_bridge.testing._steps import (
 ROBOT_KEY_HEADER = "X-ROBOT-KEY"
 PING_INTERVAL = 10.0
 INVALID_RECOVERY_PAYLOAD = "INVALID_RECOVERY_PAYLOAD"
+SCREENSHOT_BUDGET = 15.0
+"""Seconds the robot has to answer a screenshot request."""
 _CLOSING = (WSMsgType.CLOSE, WSMsgType.CLOSING, WSMsgType.CLOSED, WSMsgType.ERROR)
 
 type JsonObject = dict[str, Any]  # pyright: ignore[reportExplicitAny]  # decoded JSON holds any value
+
+
+class FakeReparoError(AssertionError):
+    """The script broke, or the robot broke the contract; raised when the `async with` ends."""
 
 
 @dataclass(frozen=True)
@@ -50,7 +60,12 @@ class FakeReparo:
 
     `async with FakeReparo(script) as reparo:` serves the recovery WebSocket and
     `POST report_result` on localhost. Point `ReparoSettings(base_url=reparo.url,
-    robot_key=reparo.robot_key)` at it.
+    robot_key=reparo.robot_key)` at it. `context` is needed only to resolve `Locate` targets
+    and to check screenshot replies against the viewport size.
+
+    It checks every reply to its own screenshot requests (`Observe`, `Act`): one binary JPEG,
+    within 15 s, at the viewport size. A violation, or a broken script (a `Locate` that matches
+    nothing), is recorded in `problems` and raises `FakeReparoError` when the `async with` ends.
     """
 
     def __init__(
@@ -74,6 +89,10 @@ class FakeReparo:
         self.aborts: list[JsonObject] = []
         self.reports: list[Report] = []
         self.script_exhausted: bool = False
+        self.problems: list[str] = []
+        """Contract violations and script errors; any of them fails the `async with` loudly."""
+        self._incoming: asyncio.Queue[object] = asyncio.Queue()
+        """The robot's replies, for the steps that wait on one."""
         self._recovery_ids: set[str] = set()
         self._runner: web.AppRunner | None = None
         self._port: int | None = None
@@ -109,6 +128,8 @@ class FakeReparo:
         if self._runner is not None:
             await self._runner.cleanup()
             self._runner = None
+        if self.problems and exc is None:
+            raise FakeReparoError("; ".join(self.problems))
 
     async def _report_result(self, request: web.Request) -> web.Response:
         recovery_id = request.match_info["recovery_id"]
@@ -187,9 +208,12 @@ class FakeReparo:
             )
             if reader.done():  # the robot closed first: nothing left to play to
                 _ = player.cancel()
+            elif (exc := player.exception()) is not None:
+                # A broken script stays loud: it fails the `async with`, and ends the Recovery.
+                self.problems.append(f"the script broke: {exc}")
+                testing_log.error("FakeReparo's script broke: %s", exc)
+                _ = await ws.close()
             _ = await asyncio.gather(reader, player, return_exceptions=True)
-            if not player.cancelled() and (exc := player.exception()) is not None:
-                raise exc  # a broken script stays loud
         finally:
             _ = reader.cancel()
             _ = player.cancel()
@@ -204,7 +228,7 @@ class FakeReparo:
         """Record every frame the robot sends after its payload, until the socket closes."""
         async for frame in ws:
             if frame.type is WSMsgType.BINARY:
-                self.replies.append(cast(bytes, frame.data))
+                self._reply(cast(bytes, frame.data))
                 continue
             if frame.type is not WSMsgType.TEXT:
                 continue
@@ -212,7 +236,7 @@ class FakeReparo:
             try:
                 message = cast(object, json.loads(text))
             except json.JSONDecodeError:
-                self.replies.append(text)
+                self._reply(text)
                 continue
             if isinstance(message, dict):
                 obj = cast(JsonObject, message)
@@ -220,12 +244,20 @@ class FakeReparo:
                     self.aborts.append(obj)
                     continue
                 message = obj
-            self.replies.append(message)
+            self._reply(message)
+
+    def _reply(self, reply: object) -> None:
+        self.replies.append(reply)
+        self._incoming.put_nowait(reply)
 
     async def _play(self, ws: web.WebSocketResponse, payload: JsonObject) -> None:
         echoed = cast(object, payload.get("variables", {}))
         for step in self._script:
             match step:
+                case Observe():
+                    await self._screenshot(ws)
+                case Act():
+                    await self._act(ws, step)
                 case Continue():
                     await self._send_done(
                         ws,
@@ -271,6 +303,78 @@ class FakeReparo:
         )
         _ = await ws.close()
 
+    async def _screenshot(self, ws: web.WebSocketResponse) -> None:
+        """Ask for a screenshot and check the reply: one binary JPEG, in time, at the viewport size."""
+        self._drain()
+        await ws.send_json({"type": "screenshot", "content": ""})
+        try:
+            async with asyncio.timeout(SCREENSHOT_BUDGET):
+                reply = await self._incoming.get()
+        except TimeoutError:
+            self._violation(f"no screenshot reply within {SCREENSHOT_BUDGET:g} s")
+            return
+        if not isinstance(reply, bytes):
+            self._violation(f"a screenshot reply was not binary: {reply!r:.200}")
+            return
+        size = jpeg_size(reply)
+        if size is None:
+            self._violation("a screenshot reply was not a JPEG")
+            return
+        viewport = self._viewport()
+        if viewport is not None and size != viewport:
+            self._violation(
+                f"a screenshot reply was {size[0]}x{size[1]}, "
+                + f"not the viewport's {viewport[0]}x{viewport[1]}"
+            )
+
+    def _viewport(self) -> tuple[int, int] | None:
+        page = None if self._context is None else latest_open_page(self._context)
+        viewport = None if page is None else page.viewport_size
+        return None if viewport is None else (viewport["width"], viewport["height"])
+
+    async def _act(self, ws: web.WebSocketResponse, step: Act) -> None:
+        """A screenshot request, then the action, its targets resolved just before sending."""
+        await self._screenshot(ws)
+        inputs: dict[str, object] = {}
+        if step.target is not None:
+            inputs["start_box"] = await self._resolve(step.target)
+        for name, value in step.inputs.items():
+            inputs[name] = (
+                await self._resolve(value) if isinstance(value, Locate) else value
+            )
+        self._drain()
+        await ws.send_json(
+            {
+                "type": "action",
+                "content": {"action_type": step.action_type, "action_inputs": inputs},
+            }
+        )
+        _ = await self._incoming.get()
+
+    async def _resolve(self, target: object) -> list[float]:
+        """A literal point as-is, or the centre of a `Locate`'s element on the active page."""
+        if not isinstance(target, Locate):
+            return [float(v) for v in cast("Sequence[float]", target)]
+        page = None if self._context is None else latest_open_page(self._context)
+        if page is None:
+            raise RuntimeError(
+                f"{target!r} needs FakeReparo(..., context=...) with an open page"
+            )
+        locator = page.locator(target.selector)
+        box = None if await locator.count() == 0 else await locator.first.bounding_box()
+        if box is None:
+            raise RuntimeError(f"{target!r} matched no visible element")
+        return [box["x"] + box["width"] / 2, box["y"] + box["height"] / 2]
+
+    def _drain(self) -> None:
+        """Forget replies no step waited on (to `SendRaw` requests), so the next one is ours."""
+        while not self._incoming.empty():
+            _ = self._incoming.get_nowait()
+
+    def _violation(self, problem: str) -> None:
+        testing_log.error("FakeReparo: the robot broke the contract: %s", problem)
+        self.problems.append(problem)
+
     async def _send_done(
         self,
         ws: web.WebSocketResponse,
@@ -293,6 +397,21 @@ class FakeReparo:
         }
         await ws.send_json({"type": "done", "content": content, "id": recovery_id})
         _ = await ws.close()
+
+
+def jpeg_size(data: bytes) -> tuple[int, int] | None:
+    """The (width, height) in a JPEG's start-of-frame header, or None if it isn't a JPEG."""
+    if data[:3] != b"\xff\xd8\xff":
+        return None
+    i = 2
+    while i + 9 <= len(data) and data[i] == 0xFF:
+        marker, length = data[i + 1], int.from_bytes(data[i + 2 : i + 4])
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+            height = int.from_bytes(data[i + 5 : i + 7])
+            width = int.from_bytes(data[i + 7 : i + 9])
+            return width, height
+        i += 2 + length
+    return None
 
 
 def _decode_json_text(frame: WSMessage) -> object | None:
