@@ -10,7 +10,6 @@ def test_defaults() -> None:
     settings = ReparoSettings(base_url="https://reparo.example.com", robot_key="k")
 
     assert settings.model_format == "bpmn"
-    assert settings.future_contract is False
     assert settings.silence_timeout == timedelta(minutes=2)
     assert settings.recovery_deadline == timedelta(minutes=10)
     assert settings.connect_attempts == 3
@@ -107,17 +106,12 @@ def test_overrides() -> None:
         base_url="https://reparo.example.com",
         robot_key="k",
         model_format="compact",
-        future_contract=True,
         silence_timeout=timedelta(seconds=1),
         recovery_deadline=timedelta(seconds=2),
         connect_attempts=1,
     )
 
-    assert (
-        settings.model_format,
-        settings.future_contract,
-        settings.connect_attempts,
-    ) == ("compact", True, 1)
+    assert (settings.model_format, settings.connect_attempts) == ("compact", 1)
     assert (settings.silence_timeout, settings.recovery_deadline) == (
         timedelta(seconds=1),
         timedelta(seconds=2),

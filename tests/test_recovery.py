@@ -9,7 +9,6 @@ import socket
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from typing import Any
 
 import pytest
 from aiohttp import web
@@ -345,15 +344,7 @@ async def test_the_model_defaults_to_bpmn(
     assert reparo.payloads[0]["model"] == p.to_model("bpmn")
 
 
-FUTURE_FIELDS = {"model_event_id", "recovery_task", "capabilities"}
-
-
-def _keys(payload: dict[str, Any]) -> set[str]:  # pyright: ignore[reportExplicitAny]
-    entries: list[dict[str, object]] = [*payload["ui_log"], payload["errored_act"]]
-    return set(payload).union(*(set(e) for e in entries))
-
-
-async def test_with_future_contract_off_the_payload_has_no_future_fields(
+async def test_entries_name_their_model_event_and_the_recovery_task_is_sent(
     context: BrowserContext, site: FixtureServer
 ) -> None:
     _ = site.page("/page", PAGE)
@@ -367,28 +358,26 @@ async def test_with_future_contract_off_the_payload_has_no_future_fields(
             variables={"approval_limit": 500},
         )
 
-    assert _keys(reparo.payloads[0]) & FUTURE_FIELDS == set()
+    payload = reparo.payloads[0]
+    assert payload["errored_act"]["model_event_id"] == "click_approve"
+    assert [e["model_event_id"] for e in payload["ui_log"]] == ["open_page"]
+    assert payload["recovery_task"] == "Approve it by hand"
 
 
-async def test_with_future_contract_on_entries_name_their_model_event(
+async def test_no_recovery_task_is_sent_when_the_activity_declares_none(
     context: BrowserContext, site: FixtureServer
 ) -> None:
     _ = site.page("/page", PAGE)
 
     async with FakeReparo([Decline("no")]) as reparo:
-        result = await run(
-            snapshot_process(),
+        _ = await run(
+            approval_process(_click_disabled),
             context=context,
-            reparo=settings(reparo, future_contract=True),
+            reparo=settings(reparo),
             case_id=1,
-            variables={"approval_limit": 500},
         )
 
-    assert result.outcome == "recovery_declined"
-    payload = reparo.payloads[0]
-    assert payload["errored_act"]["model_event_id"] == "click_approve"
-    assert [e["model_event_id"] for e in payload["ui_log"]] == ["open_page"]
-    assert payload["recovery_task"] == "Approve it by hand"
+    assert "recovery_task" not in reparo.payloads[0]
 
 
 # --------------------------------------------------------------------------- Reparo's answer

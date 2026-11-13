@@ -74,18 +74,15 @@ def _common(
     number: int,
     event: EventNode,
     passes: tuple[int, ...],
-    future_contract: bool,
 ) -> JsonObject:
-    fields: JsonObject = {
+    return {
         "case_id": str(case_id),
         "activity_id": event.activity.id,
         "activity_name": event.activity.name,
         "event_id": str(number),
         "event_name": event_name(event, passes),
+        "model_event_id": event.id,
     }
-    if future_contract:
-        fields["model_event_id"] = event.id
-    return fields
 
 
 def build_payload(
@@ -96,11 +93,10 @@ def build_payload(
     errored: ErroredActivity,
     variables: Variables,
 ) -> Payload:
-    """The Recovery payload, with the future-contract fields only when `future_contract` is on."""
-    future = settings.future_contract
+    """The Recovery payload, in Reparo's v1 recovery contract."""
     entries: list[JsonObject] = [
         {
-            **_common(case_id, logged.number, logged.event, logged.passes, future),
+            **_common(case_id, logged.number, logged.event, logged.passes),
             "action_type": NO_CALL_ATTEMPTED,
             "application": None,
             "input": None,
@@ -113,7 +109,7 @@ def build_payload(
         for logged in ui_log
     ]
     errored_act: JsonObject = {
-        **_common(case_id, errored.number, errored.event, errored.passes, future),
+        **_common(case_id, errored.number, errored.event, errored.passes),
         "action_type": NO_CALL_ATTEMPTED,
         "application": None,
         "input": None,
@@ -130,6 +126,6 @@ def build_payload(
         "errored_act": errored_act,
         "model": model,
     }
-    if future and errored.event.activity.recovery_task is not None:
+    if errored.event.activity.recovery_task is not None:
         body["recovery_task"] = errored.event.activity.recovery_task
     return Payload(body, len(entries), len(variables), len(model.encode()))

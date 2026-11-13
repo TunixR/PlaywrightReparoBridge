@@ -30,7 +30,6 @@ class ReparoSettings(BaseModel):
     base_url: str
     robot_key: SecretStr
     model_format: ModelFormat = "bpmn"
-    future_contract: bool = False
     silence_timeout: timedelta = Field(default=DEFAULT_SILENCE_TIMEOUT, gt=timedelta(0))
     recovery_deadline: timedelta = Field(
         default=DEFAULT_RECOVERY_DEADLINE, gt=timedelta(0)
@@ -43,7 +42,6 @@ class ReparoSettings(BaseModel):
         base_url: str,
         robot_key: str | SecretStr | None = None,
         model_format: ModelFormat = "bpmn",
-        future_contract: bool = False,
         silence_timeout: timedelta = DEFAULT_SILENCE_TIMEOUT,
         recovery_deadline: timedelta = DEFAULT_RECOVERY_DEADLINE,
         connect_attempts: int = 3,
@@ -54,7 +52,6 @@ class ReparoSettings(BaseModel):
             base_url=base_url,
             robot_key=robot_key,  # None fails validation
             model_format=model_format,
-            future_contract=future_contract,
             silence_timeout=silence_timeout,
             recovery_deadline=recovery_deadline,
             connect_attempts=connect_attempts,

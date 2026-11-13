@@ -312,7 +312,7 @@ class _Run:
             failure.type = "recovery_declined"
             return RunResult(
                 outcome="recovery_declined",
-                reason="Reparo declined the Recovery",
+                reason="Reparo could not recover the failure",
                 failure=failure,
                 recovery_id=answer.recovery_id,
             )
@@ -389,6 +389,8 @@ async def _run(
     result = await _Run(definition, context, reparo, resolved).walk(
         copy.deepcopy(dict(variables))
     )
+    # Every run that started a Recovery gets here, whatever its outcome, so Reparo hears back
+    # once for each Recovery id it handed out.
     if result.recovery_id is not None:
         await report_result(
             reparo, result.recovery_id, result.outcome == "completed", extra
