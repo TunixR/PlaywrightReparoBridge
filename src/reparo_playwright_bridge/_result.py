@@ -2,43 +2,27 @@
 
 from __future__ import annotations
 
-from typing import Literal, Self, override
+from typing import Literal, Self, get_args, override
 
 from pydantic import BaseModel, model_validator
 
-Outcome = Literal[
-    "completed",
-    "checks_failed",
-    "local",
-    "recovery_failed",
-    "recovery_unavailable",
-    "continuation_rejected",
-    "continuation_failed",
-]
-
-FailedOutcome = Literal[
-    "local",
-    "recovery_failed",
-    "recovery_unavailable",
-    "continuation_rejected",
-    "continuation_failed",
-]
-"""The outcomes of a run that didn't reach its end; each comes with a Failure."""
+ReachedEnd = Literal["completed", "checks_failed"]
+"""The outcomes of a run that reached its end; they come with no Failure."""
 
 LocalOutcome = Literal["local", "continuation_failed"]
 """How a run fails locally: `local`, or `continuation_failed` once a Continuation resumed it."""
 
-FailureType = Literal[
-    "local",
-    "recovery_failed",
-    "recovery_unavailable",
-    "continuation_rejected",
-    "continuation_failed",
-    "payload_rejected",
-    "timeout",
+FailedOutcome = Literal[
+    LocalOutcome, "recovery_failed", "recovery_unavailable", "continuation_rejected"
 ]
+"""The outcomes of a run that didn't reach its end; each comes with a Failure."""
 
-_REACHED_END: frozenset[Outcome] = frozenset({"completed", "checks_failed"})
+Outcome = Literal[ReachedEnd, FailedOutcome]
+
+FailureType = Literal[FailedOutcome, "payload_rejected", "timeout"]
+"""A failed outcome, or a sub-cause of one."""
+
+_REACHED_END: frozenset[Outcome] = frozenset(get_args(ReachedEnd))
 _SUB_CAUSES: dict[Outcome, frozenset[FailureType]] = {
     "recovery_unavailable": frozenset({"payload_rejected", "timeout"}),
 }
