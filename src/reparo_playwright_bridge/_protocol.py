@@ -17,6 +17,7 @@ from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidStatus
 
 from reparo_playwright_bridge._classify import FailureKind
+from reparo_playwright_bridge._context import latest_open_page
 from reparo_playwright_bridge._log import recovery_log
 from reparo_playwright_bridge._payload import Payload
 from reparo_playwright_bridge._result import FailedOutcome, FailureType
@@ -198,29 +199,49 @@ def _seconds(span: timedelta) -> str:
 
 
 class _EnvironmentWatch:
-    """Notices the active page or the browser context going away while a Recovery runs.
+    """Notices the Environment going away while a Recovery runs.
 
-    It watches the page that is active when the Recovery starts; with none open, the
-    Environment is already gone.
+    It follows the active page as the engine defines it (the most recently opened page that is
+    still open), so a tab opened during the Recovery is watched from then on. The active page
+    crashing, the last open page closing, or the context closing loses the Environment; closing
+    one tab while another is open does not.
     """
 
     def __init__(self, context: BrowserContext) -> None:
         self._context: BrowserContext = context
-        open_pages = [page for page in context.pages if not page.is_closed()]
-        self._page: Page | None = open_pages[-1] if open_pages else None
+        self._page: Page | None = None
         self.lost: asyncio.Event = asyncio.Event()
         self.cause: str = ""
         """What went away, as a clause for the reason (`the page closed`)."""
-        if self._page is None:
-            self._lose("no page was open")
 
     def _lose(self, cause: str) -> None:
         if not self.lost.is_set():
             self.cause = cause
             self.lost.set()
 
+    def _follow(self, gone: str) -> None:
+        """Watch the current active page; with none left, the Environment is `gone`."""
+        page = latest_open_page(self._context)
+        if page is self._page:
+            return
+        self._unwatch()
+        self._page = page
+        if page is None:
+            self._lose(gone)
+            return
+        page.on("close", self._page_closed)
+        page.on("crash", self._page_crashed)
+
+    def _unwatch(self) -> None:
+        if self._page is not None:
+            self._page.remove_listener("close", self._page_closed)
+            self._page.remove_listener("crash", self._page_crashed)
+
+    def _page_opened(self, _page: Page) -> None:
+        self._follow("the page closed")
+
     def _page_closed(self, _page: Page) -> None:
-        self._lose("the page closed")
+        self._follow("the page closed")
 
     def _page_crashed(self, _page: Page) -> None:
         self._lose("the page crashed")
@@ -229,16 +250,14 @@ class _EnvironmentWatch:
         self._lose("the browser context closed")
 
     def __enter__(self) -> Self:
-        if self._page is not None:
-            self._page.on("close", self._page_closed)
-            self._page.on("crash", self._page_crashed)
+        self._context.on("page", self._page_opened)
         self._context.on("close", self._context_closed)
+        self._follow("no page was open")
         return self
 
     def __exit__(self, *_exc: object) -> None:
-        if self._page is not None:
-            self._page.remove_listener("close", self._page_closed)
-            self._page.remove_listener("crash", self._page_crashed)
+        self._unwatch()
+        self._context.remove_listener("page", self._page_opened)
         self._context.remove_listener("close", self._context_closed)
 
 

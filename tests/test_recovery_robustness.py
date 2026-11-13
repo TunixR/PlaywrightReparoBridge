@@ -381,3 +381,60 @@ async def test_the_page_closing_while_connecting_ends_the_run_local_without_a_pa
     assert result.reason.startswith("Environment failure: the page closed")
     assert "Recovery of Event click_approve" in result.reason
     assert reparo.payloads == []
+
+
+async def test_a_tab_opened_during_the_recovery_is_followed(
+    context: BrowserContext, site: FixtureServer
+) -> None:
+    """Closing the old tab once a newer one is open is not an Environment failure."""
+    _ = site.page("/page", PAGE)
+
+    async with FakeReparo([Silence(10)]) as reparo:
+
+        async def switch_tabs() -> None:
+            while not reparo.payloads:
+                await asyncio.sleep(0.05)
+            original = context.pages[-1]
+            _ = await context.new_page()
+            await original.close()
+
+        switcher = asyncio.create_task(switch_tabs())
+        result = await run(
+            approval_process(click_disabled),
+            context=context,
+            reparo=settings(reparo, silence_timeout=timedelta(seconds=1.5)),
+            case_id=1,
+        )
+        await switcher
+
+    assert result.outcome == "recovery_unavailable"
+    assert result.failure is not None
+    assert result.failure.type == "timeout"
+
+
+async def test_a_crash_in_a_tab_opened_during_the_recovery_ends_the_run_local(
+    context: BrowserContext, site: FixtureServer
+) -> None:
+    _ = site.page("/page", PAGE)
+
+    async with FakeReparo([Silence(10)]) as reparo:
+
+        async def open_then_crash() -> None:
+            while not reparo.payloads:
+                await asyncio.sleep(0.05)
+            _ = await context.new_page()
+            await _crash_page(context)
+
+        crasher = asyncio.create_task(open_then_crash())
+        result = await run(
+            approval_process(click_disabled),
+            context=context,
+            reparo=settings(reparo),
+            case_id=1,
+        )
+        await crasher
+
+    assert result.outcome == "local"
+    assert result.reason is not None
+    assert result.reason.startswith("Environment failure: the page crashed")
+    assert [a["error_code"] for a in reparo.aborts] == ["EnvironmentFailure"]
