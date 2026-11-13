@@ -14,7 +14,7 @@ from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidSta
 
 from reparo_playwright_bridge._log import recovery_log
 from reparo_playwright_bridge._payload import Payload
-from reparo_playwright_bridge._result import FailureType, Outcome
+from reparo_playwright_bridge._result import FailedOutcome, FailureType
 from reparo_playwright_bridge._settings import ReparoSettings
 
 ROBOT_KEY_HEADER = "X-ROBOT-KEY"
@@ -53,7 +53,7 @@ class Done:
 class Ended:
     """The Recovery ended without a usable `done`."""
 
-    outcome: Outcome
+    outcome: FailedOutcome
     failure_type: FailureType
     reason: str
 

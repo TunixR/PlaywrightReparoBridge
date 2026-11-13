@@ -174,3 +174,15 @@ def classify(exc: BaseException) -> Classified:
     detail = _first_line(str(exc))
     name = type(exc).__name__
     return Classified(FailureKind.PROCESS_BUG, f"{name}: {detail}" if detail else name)
+
+
+def classify_outside_event(exc: BaseException) -> Classified:
+    """A raise from author code that isn't an Event body (a Completion check, `on_continuation`).
+
+    Only an Environment failure keeps its class: there is no Event for a UI failure to belong to,
+    so anything else is a Process bug.
+    """
+    classified = classify(exc)
+    if classified.kind in (FailureKind.ENVIRONMENT, FailureKind.PROCESS_BUG):
+        return classified
+    return Classified(FailureKind.PROCESS_BUG, classified.summary)
