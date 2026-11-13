@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 import pytest
-from playwright.async_api import Browser, BrowserContext, expect
+from playwright.async_api import Browser, BrowserContext
 
 from reparo_playwright_bridge import EventContext, Process, ReparoSettings, run
 from tests.fixture_server import FixtureServer
@@ -465,70 +465,8 @@ async def test_an_environment_failure_ends_the_run_local(
     assert [r for r in caplog.records if r.levelno == logging.ERROR and r.exc_info]
 
 
-async def _click_disabled(ctx: EventContext) -> None:
-    await ctx.page.get_by_role("button", name="Approve").click(timeout=300)
-
-
-async def _click_missing(ctx: EventContext) -> None:
-    await ctx.page.get_by_role("button", name="Reject").click(timeout=300)
-
-
-async def _click_missing_whose_selector_names_an_environment_failure(
-    ctx: EventContext,
-) -> None:
-    # The call log repeats the selector; only the error itself decides the class.
-    await ctx.page.get_by_text("Target closed: Protocol error, crashed").click(
-        timeout=300
-    )
-
-
-async def _click_ambiguous(ctx: EventContext) -> None:
-    await ctx.page.locator("button, p").click(timeout=300)
-
-
-async def _failed_expect(ctx: EventContext) -> None:
-    await expect(ctx.page.locator("#status")).to_have_text("approved", timeout=300)
-
-
 async def _declared_failure(ctx: EventContext) -> None:
     ctx.fail("The request is still pending", code="RequestStillPending")
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        _click_disabled,
-        _click_missing,
-        _click_missing_whose_selector_names_an_environment_failure,
-        _click_ambiguous,
-        _failed_expect,
-        _declared_failure,
-    ],
-)
-async def test_a_ui_failure_ends_the_run_local_without_reparo(
-    context: BrowserContext,
-    reparo: ReparoSettings,
-    site: FixtureServer,
-    body: Callable[[EventContext], Awaitable[None]],
-) -> None:
-    _ = site.page("/page", PAGE)
-    ran_after: list[str] = []
-
-    result = await run(
-        failing_process(body, ran_after), context=context, reparo=reparo, case_id=1
-    )
-
-    assert result.outcome == "local"
-    assert result.failure is not None
-    assert result.failure.type == "local"
-    assert result.failure.event_id == "fail_here"
-    assert result.failure.error_code
-    assert result.failure.error_description
-    assert "\n" not in result.failure.error_description
-    assert "Call log" not in result.failure.error_description
-    assert result.reason is not None
-    assert result.reason.startswith("UI failure: ")
-    assert ran_after == []
 
 
 async def test_ctx_fail_carries_its_code_and_description(
@@ -629,7 +567,9 @@ async def test_for_each_runs_its_block_once_per_item_binding_the_item(
     assert await _page_log(context) == ["request r1", "request r2", "request r3"]
 
 
-def grid_process(fail_at: tuple[str, int] | None = None) -> Process:
+def grid_process(
+    fail_at: tuple[str, int] | None = None, *, recoverable: bool = True
+) -> Process:
     """Notes every cell of `rows` × `cols` in two nested loops; optionally fails at one cell."""
     p = Process("grid", variables={"rows": list, "cols": list})
     with p.activity("Open the log"):
@@ -641,7 +581,7 @@ def grid_process(fail_at: tuple[str, int] | None = None) -> Process:
     with (
         p.for_each("each_row", over="rows", as_="row"),
         p.for_each("each_col", over="cols", as_="col"),
-        p.activity("Note the cell"),
+        p.activity("Note the cell", recoverable=recoverable),
     ):
 
         @p.event("Note the cell")
@@ -680,7 +620,7 @@ async def test_a_failure_in_a_nested_loop_names_the_pass_of_each_loop(
     caplog.set_level(logging.DEBUG, logger="reparo_playwright_bridge")
 
     result = await run(
-        grid_process(fail_at=("b", 2)),
+        grid_process(fail_at=("b", 2), recoverable=False),
         context=context,
         reparo=reparo,
         case_id=1,

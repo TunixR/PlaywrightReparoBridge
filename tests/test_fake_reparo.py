@@ -17,7 +17,7 @@ from websockets.exceptions import ConnectionClosed
 from reparo_playwright_bridge.testing import (
     Close,
     Continue,
-    Decline,
+    Fail,
     FakeReparo,
     Report,
     SendError,
@@ -292,8 +292,8 @@ def test_absent_capabilities_default_to_vision_without_ocr() -> None:
 # --- Script steps ---
 
 
-async def test_decline_sends_done_with_success_false() -> None:
-    reparo, frames, close_code = await play([Decline("the Approve button is gone")])
+async def test_fail_sends_done_with_success_false() -> None:
+    reparo, frames, close_code = await play([Fail("the Approve button is gone")])
 
     [done] = [loads(frame) for frame in frames]
     assert done["type"] == "done"

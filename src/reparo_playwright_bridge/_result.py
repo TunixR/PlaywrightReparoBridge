@@ -10,7 +10,7 @@ Outcome = Literal[
     "completed",
     "checks_failed",
     "local",
-    "recovery_declined",
+    "recovery_failed",
     "recovery_unavailable",
     "continuation_rejected",
     "continuation_failed",
@@ -18,7 +18,7 @@ Outcome = Literal[
 
 FailureType = Literal[
     "local",
-    "recovery_declined",
+    "recovery_failed",
     "recovery_unavailable",
     "continuation_rejected",
     "continuation_failed",
