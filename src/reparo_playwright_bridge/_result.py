@@ -16,6 +16,9 @@ Outcome = Literal[
     "continuation_failed",
 ]
 
+LocalOutcome = Literal["local", "continuation_failed"]
+"""How a run fails locally: `local`, or `continuation_failed` once a Continuation resumed it."""
+
 FailureType = Literal[
     "local",
     "recovery_failed",

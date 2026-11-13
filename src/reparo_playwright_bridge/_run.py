@@ -12,8 +12,18 @@ from typing import cast
 from playwright.async_api import BrowserContext
 
 from reparo_playwright_bridge._checks import run_checks
-from reparo_playwright_bridge._classify import FailureKind, classify
+from reparo_playwright_bridge._classify import (
+    FailureKind,
+    classify,
+    classify_outside_event,
+)
 from reparo_playwright_bridge._context import EventContext, Variables, active_page
+from reparo_playwright_bridge._continuation import (
+    HookCrashed,
+    Rejected,
+    Resume,
+    resolve,
+)
 from reparo_playwright_bridge._definition import (
     Activity,
     EventNode,
@@ -28,17 +38,20 @@ from reparo_playwright_bridge._payload import (
     ErroredActivity,
     LoggedEvent,
     build_payload,
+    event_name,
     pass_suffix,
 )
 from reparo_playwright_bridge._process import Process, definition_of
-from reparo_playwright_bridge._protocol import Ended, recover
+from reparo_playwright_bridge._protocol import ContinuationContent, Ended, recover
 from reparo_playwright_bridge._report import report_result
-from reparo_playwright_bridge._result import Failure, RunResult
+from reparo_playwright_bridge._result import Failure, LocalOutcome, RunResult
 from reparo_playwright_bridge._settings import ReparoSettings
 
 CaseId = str | int
 Passes = tuple[int, ...]
 """The pass of each enclosing loop, outermost first."""
+_Stop = RunResult | Resume
+"""Why a walk stopped early: the run ended, or Reparo's Continuation moved it elsewhere."""
 
 
 class _LocalFailure(Exception):
@@ -98,21 +111,83 @@ class _Run:
         self._ui_log: list[LoggedEvent] = []
         """Every Logged event since run start, oldest first."""
 
+        self._last_number: int = 0
+        """The last Logged-event number taken. The Errored activity takes one too, so the Event a
+        Continuation resumes at is a new Logged event with the next number."""
+
         self._entered: tuple[Activity, Passes] | None = None
         """The Activity and pass of the last Event run, to log each Activity entered once per pass."""
 
+        self._recovery_id: str | None = None
+        """The id of the run's one Recovery, once Reparo answered with a Continuation."""
+
     async def walk(self, variables: Variables) -> RunResult:
-        failure = await self._sequence(self.definition.root, variables, ())
-        if failure is not None:
-            return failure
-        return await run_checks(
-            self.definition.checks, self.context, variables, self.case_id
-        )
+        try:
+            stop = await self._walk(variables)
+        # An engine internal is a Process bug too, and after a Continuation still continuation_failed.
+        except Exception as exc:  # noqa: BLE001
+            summary = classify(exc).summary
+            run_log.error(
+                "Run failed: Process bug (%s)",
+                summary,
+                exc_info=exc,
+                extra={"case_id": self.case_id},
+            )
+            stop = RunResult(
+                outcome=self._local_outcome,
+                reason=f"{FailureKind.PROCESS_BUG.value}: {summary}",
+                failure=Failure(type=self._local_outcome),
+            )
+        if self._recovery_id is not None and stop.recovery_id is None:
+            stop = stop.model_copy(update={"recovery_id": self._recovery_id})
+        return stop
+
+    async def _walk(self, variables: Variables) -> RunResult:
+        stop = await self._sequence(self.definition.root, variables, ())
+        if isinstance(stop, Resume):
+            # The run's one Recovery is over: start again at the Event Reparo named.
+            variables = stop.variables
+            stop = (
+                None  # process_finished: no more Events, only the Completion checks
+                if stop.event is None
+                else await self._sequence(
+                    self.definition.root, variables, (), start=stop.event
+                )
+            )
+        # Only the run's one Recovery resumes it: after it, a UI failure is never handed over.
+        assert not isinstance(stop, Resume)
+        if stop is None:
+            stop = await run_checks(
+                self.definition.checks,
+                self.context,
+                variables,
+                self.case_id,
+                self._local_outcome,
+            )
+        return stop
+
+    @property
+    def _local_outcome(self) -> LocalOutcome:
+        """A failure after the Continuation is `continuation_failed`, whatever its kind."""
+        return "local" if self._recovery_id is None else "continuation_failed"
+
+    def _next_number(self) -> int:
+        self._last_number += 1
+        return self._last_number
 
     async def _sequence(
-        self, sequence: SequenceNode, variables: Variables, passes: Passes
-    ) -> RunResult | None:
+        self,
+        sequence: SequenceNode,
+        variables: Variables,
+        passes: Passes,
+        *,
+        start: EventNode | None = None,
+    ) -> _Stop | None:
         for node in sequence.nodes:
+            if start is not None:
+                if node is not start:
+                    continue
+                start = None
             match node:
                 case EventNode():
                     failure = await self._event(node, variables, passes)
@@ -126,7 +201,7 @@ class _Run:
 
     async def _xor(
         self, xor: XorNode, variables: Variables, passes: Passes
-    ) -> RunResult | None:
+    ) -> _Stop | None:
         # Conditions get the Variables read-only: they are pure functions of them.
         view = MappingProxyType(variables)
         for arm in xor.arms:
@@ -144,7 +219,7 @@ class _Run:
 
     async def _loop(
         self, loop: LoopNode, variables: Variables, passes: Passes
-    ) -> RunResult | None:
+    ) -> _Stop | None:
         # The list is re-read on every pass: pass i always binds the current vars[over][i].
         index = 0
         while True:
@@ -182,14 +257,14 @@ class _Run:
             extra={"case_id": self.case_id, "loop_iteration": list(passes)},
         )
         return RunResult(
-            outcome="local",
+            outcome=self._local_outcome,
             reason=f"{FailureKind.PROCESS_BUG.value}: {where}: {summary}",
-            failure=Failure(type="local"),
+            failure=Failure(type=self._local_outcome),
         )
 
     async def _event(
         self, event: EventNode, variables: Variables, passes: Passes
-    ) -> RunResult | None:
+    ) -> _Stop | None:
         extra: dict[str, object] = {
             "case_id": self.case_id,
             "event_id": event.id,
@@ -213,7 +288,11 @@ class _Run:
             await event.fn(EventContext(page, variables))
         except Exception as exc:  # noqa: BLE001  # every raise is classified, never re-raised
             return await self._event_failed(event, name, passes, exc, extra, snapshot)
-        self._ui_log.append(LoggedEvent.now(len(self._ui_log) + 1, event, passes))
+        logged = LoggedEvent.now(self._next_number(), event, passes)
+        self._ui_log.append(logged)
+        run_log.debug(
+            "Logged event %d: %s", logged.number, event_name(event, passes), extra=extra
+        )
         run_log.debug(
             "Event %s ended in %.0f ms",
             name,
@@ -230,9 +309,10 @@ class _Run:
         exc: Exception,
         extra: dict[str, object],
         snapshot: Variables,
-    ) -> RunResult:
+    ) -> _Stop:
         classified = classify(exc)
-        failure = Failure(type="local", event_id=event.id, loop_iteration=list(passes))
+        outcome = self._local_outcome
+        failure = Failure(type=outcome, event_id=event.id, loop_iteration=list(passes))
         if classified.kind is not FailureKind.UI:
             run_log.error(
                 "Event %s failed: %s (%s)",
@@ -242,12 +322,14 @@ class _Run:
                 exc_info=exc,
                 extra=extra,
             )
-            return RunResult(outcome="local", reason=classified.reason, failure=failure)
+            return RunResult(outcome=outcome, reason=classified.reason, failure=failure)
         failure.error_code = classified.error_code
         failure.error_description = classified.summary
         run_log.debug("Event %s failed: UI failure", name, exc_info=exc, extra=extra)
         # An Event can't opt back into Recovery inside an opted-out Activity.
-        if not event.activity.recoverable:
+        if self._recovery_id is not None:
+            why = "the run already had its one Recovery"
+        elif not event.activity.recoverable:
             why = f"Activity {event.activity.name!r} is not recoverable"
         elif not event.recoverable:
             why = f"Event {event.id} is not recoverable"
@@ -262,7 +344,7 @@ class _Run:
             extra=extra,
         )
         return RunResult(
-            outcome="local",
+            outcome=outcome,
             reason=f"{classified.reason} (not handed to Reparo: {why})",
             failure=failure,
         )
@@ -275,7 +357,7 @@ class _Run:
         failure: Failure,
         extra: dict[str, object],
         snapshot: Variables,
-    ) -> RunResult:
+    ) -> _Stop:
         """Hand the UI failure to Reparo as the run's one Recovery."""
         code, description = failure.error_code or "", failure.error_description or ""
         recovery_log.info(
@@ -285,9 +367,7 @@ class _Run:
             description,
             extra=extra,
         )
-        errored = ErroredActivity(
-            len(self._ui_log) + 1, event, passes, code, description
-        )
+        errored = ErroredActivity(self._next_number(), event, passes, code, description)
         payload = build_payload(
             self.definition,
             self.settings,
@@ -308,7 +388,8 @@ class _Run:
             str(answer.content.success).lower(),
             extra=extra,
         )
-        if not answer.content.success:
+        content = answer.content
+        if isinstance(content, ContinuationContent) and not content.success:
             failure.type = "recovery_failed"
             return RunResult(
                 outcome="recovery_failed",
@@ -316,14 +397,48 @@ class _Run:
                 failure=failure,
                 recovery_id=answer.recovery_id,
             )
-        # Resuming at Reparo's Continuation comes with the Continuation resolver.
-        failure.type = "continuation_rejected"
-        return RunResult(
-            outcome="continuation_rejected",
-            reason="resuming after a Recovery is not supported yet",
-            failure=failure,
-            recovery_id=answer.recovery_id,
+        resolved = resolve(self.definition, content, snapshot)
+        match resolved:
+            case Rejected():
+                failure.type = "continuation_rejected"
+                return RunResult(
+                    outcome="continuation_rejected",
+                    reason=resolved.reason,
+                    failure=failure,
+                    recovery_id=answer.recovery_id,
+                )
+            case HookCrashed(exc=exc):
+                classified = classify_outside_event(exc)
+                run_log.error(
+                    "on_continuation crashed: %s (%s)",
+                    classified.kind.value,
+                    classified.summary,
+                    exc_info=exc,
+                    extra=extra,
+                )
+                return RunResult(
+                    outcome="continuation_failed",
+                    reason=f"{classified.kind.value}: on_continuation crashed: {classified.summary}",
+                    failure=Failure(type="continuation_failed"),
+                    recovery_id=answer.recovery_id,
+                )
+            case Resume():
+                pass
+        self._recovery_id = answer.recovery_id
+        if resolved.event is None:
+            where = "the Process is finished"
+        else:
+            passes = tuple(cast("ContinuationContent", content).loop_iteration)
+            where = f"resuming at Event {resolved.event.id}{pass_suffix(passes)}"
+        recovery_log.info(
+            "Continuation: %s; %s",
+            where,
+            "changed Variables: " + ", ".join(resolved.changed)
+            if resolved.changed
+            else "no Variables changed",
+            extra=extra,
         )
+        return resolved
 
 
 async def run(

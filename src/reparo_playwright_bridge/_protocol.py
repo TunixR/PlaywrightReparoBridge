@@ -42,10 +42,17 @@ class ContinuationContent(BaseModel):
 
 
 @dataclass(frozen=True)
+class LegacyContinuation:
+    """Today's `done.content` (Reparo's `ResponseToRPA` with `continue_from_step`), which names no Event."""
+
+    success: bool
+
+
+@dataclass(frozen=True)
 class Done:
     """Reparo ended the Recovery with a well-formed `done`."""
 
-    content: ContinuationContent
+    content: ContinuationContent | LegacyContinuation
     recovery_id: str
 
 
@@ -143,15 +150,24 @@ def _decode(frame: str | bytes) -> dict[str, object] | None:
 
 def _done(message: dict[str, object]) -> Done | Ended:
     recovery_id = message.get("id")
+    raw = message.get("content")
+    content: ContinuationContent | LegacyContinuation | None
     try:
-        content = ContinuationContent.model_validate(message.get("content"))
+        content = ContinuationContent.model_validate(raw)
     except ValidationError:
-        content = None
+        content = _legacy(raw)
     if content is None or not isinstance(recovery_id, str) or not recovery_id:
         return Ended.unavailable(
             "Reparo sent a done without a Continuation and a Recovery id"
         )
     return Done(content, recovery_id)
+
+
+def _legacy(raw: object) -> LegacyContinuation | None:
+    if not isinstance(raw, dict) or "continue_from_step" not in raw:
+        return None
+    success = cast("dict[str, object]", raw).get("success")
+    return LegacyContinuation(success) if isinstance(success, bool) else None
 
 
 def _error(message: dict[str, object], extra: Mapping[str, object]) -> Ended:
