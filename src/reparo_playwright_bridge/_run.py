@@ -373,7 +373,13 @@ class _Run:
             errored,
             snapshot,
         )
-        answer = await recover(self.settings, payload, extra)
+        answer = await recover(
+            self.settings,
+            payload,
+            extra,
+            context=self.context,
+            recovery=f"Event {name}",
+        )
         if isinstance(answer, Ended):
             return RunResult.failed(
                 answer.outcome,
