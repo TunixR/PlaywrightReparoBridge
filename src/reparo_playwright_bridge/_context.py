@@ -12,10 +12,15 @@ Variables = dict[str, Any]  # pyright: ignore[reportExplicitAny]  # Variables ho
 EXPECTATION_NOT_MET = "ExpectationNotMet"
 
 
+def latest_open_page(context: BrowserContext) -> Page | None:
+    """The most recently opened page that is still open, or None if there is none."""
+    pages = [page for page in context.pages if not page.is_closed()]
+    return pages[-1] if pages else None
+
+
 async def active_page(context: BrowserContext) -> Page:
     """The most recently opened page that is still open; a new page only if there is none."""
-    pages = [page for page in context.pages if not page.is_closed()]
-    return pages[-1] if pages else await context.new_page()
+    return latest_open_page(context) or await context.new_page()
 
 
 class UIFailure(Exception):
