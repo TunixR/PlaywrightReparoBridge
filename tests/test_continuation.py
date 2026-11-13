@@ -219,11 +219,11 @@ def structured_process(trail: list[str]) -> Process:
         ([Continue("no_such_event", [])], "no_such_event"),
         ([Continue(None, [])], "names no Event"),
         ([Continue("read_status", [0])], "read_status"),
-        ([Continue("read_item", [0])], "read_item"),
-        ([Continue("accept_item", [0])], "accept_item"),
+        ([Continue("read_item", [])], "read_item"),
+        ([Continue("accept_item", [0, 0])], "accept_item"),
     ],
 )
-async def test_an_answer_that_names_no_top_level_event_is_rejected(
+async def test_an_answer_naming_no_event_or_the_wrong_number_of_passes_is_rejected(
     context: BrowserContext, site: FixtureServer, script: list[Step], in_reason: str
 ) -> None:
     _ = site.page("/page", PAGE)
@@ -486,3 +486,206 @@ async def test_any_failure_after_a_continuation_ends_continuation_failed(
     assert str(result).startswith("continuation_failed")
     assert f", Recovery {result.recovery_id}: " in str(result)
     assert reparo.reports == [Report(result.recovery_id, {"success": False})]
+
+
+ORDERS = [["a0", "a1"], ["b0", "b1", "b2"], ["c0", "c1"]]
+
+
+def nested_loop_process(trail: list[str], *, fail_at: str = "b1") -> Process:
+    """open_page, then `each_order` over `orders`, holding `each_line` over the order itself.
+
+    `handle_line` is a UI failure the first time it sees `fail_at`, and appends each line it
+    handles to `trail`.
+    """
+    failed: list[None] = []
+    p = Process("handle orders")
+    with p.activity("Open the orders"):
+
+        @p.event("Open the page")
+        async def open_page(ctx: EventContext) -> None:
+            _ = await ctx.page.goto("/page")
+
+    with (
+        p.for_each("each_order", over="orders", as_="order"),
+        p.for_each("each_line", over="order", as_="line"),
+        p.activity("Handle the line"),
+    ):
+
+        @p.event("Handle the line")
+        async def handle_line(ctx: EventContext) -> None:
+            line = ctx.vars["line"]
+            if line == fail_at and not failed:
+                failed.append(None)
+                ctx.fail("The line is locked.", code="LineLocked")
+            trail.append(line)
+
+    return p
+
+
+async def test_resuming_inside_nested_loops_runs_on_from_the_named_passes(
+    context: BrowserContext, site: FixtureServer
+) -> None:
+    _ = site.page("/page", PAGE)
+    trail: list[str] = []
+
+    result, _reparo = await recover(
+        context,
+        nested_loop_process(trail),
+        [Continue("handle_line", [0, 1])],
+        variables={"orders": ORDERS},
+    )
+
+    assert result.outcome == "completed"
+    # Up to the failure at b1; then from order 0 line 1, and on with order 1 from line 0.
+    assert trail == ["a0", "a1", "b0", "a1", "b0", "b1", "b2", "c0", "c1"]
+
+
+async def test_loop_item_variables_are_rebound_from_their_lists_never_taken_from_reparo(
+    context: BrowserContext, site: FixtureServer, caplog: pytest.LogCaptureFixture
+) -> None:
+    _ = site.page("/page", PAGE)
+    caplog.set_level(logging.INFO, logger="reparo_playwright_bridge")
+    trail: list[str] = []
+
+    result, _reparo = await recover(
+        context,
+        nested_loop_process(trail),
+        [Continue("handle_line", [1, 1], variables={"order": ["x"], "line": "x"})],
+        variables={"orders": ORDERS},
+    )
+
+    assert result.outcome == "completed"
+    assert trail == ["a0", "a1", "b0", "b1", "b2", "c0", "c1"]
+    continuation = [
+        r.getMessage()
+        for r in caplog.records
+        if r.getMessage().startswith("Continuation:")
+    ]
+    assert continuation == [
+        "Continuation: resuming at Event handle_line #1#1; no Variables changed"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("passes", "returned", "in_reason"),
+    [
+        ([3, 0], None, "pass 3 of loop each_order"),
+        ([0, 2], None, "pass 2 of loop each_line"),
+        ([1, 0], {"orders": [["a0"]]}, "pass 1 of loop each_order"),
+        ([0, -1], None, "pass -1 of loop each_line"),
+    ],
+    ids=["outer", "inner", "merged list", "negative"],
+)
+async def test_a_pass_beyond_its_list_is_rejected(
+    context: BrowserContext,
+    site: FixtureServer,
+    passes: list[int],
+    returned: dict[str, object] | None,
+    in_reason: str,
+) -> None:
+    _ = site.page("/page", PAGE)
+    trail: list[str] = []
+
+    result, reparo = await recover(
+        context,
+        nested_loop_process(trail),
+        [Continue("handle_line", passes, variables=returned)],
+        variables={"orders": ORDERS},
+    )
+
+    assert result.outcome == "continuation_rejected"
+    assert result.reason is not None
+    assert in_reason in result.reason
+    assert trail == ["a0", "a1", "b0"]
+    assert result.recovery_id is not None
+    assert reparo.reports == [Report(result.recovery_id, {"success": False})]
+
+
+def routing_process(trail: list[str]) -> Process:
+    """open_page, then gateway `route`: `review_large` if the amount is over 100, else `approve_small`.
+
+    `review_large` is a UI failure the first time it runs; each Event appends its id to `trail`.
+    """
+    failed: list[None] = []
+    p = Process("route requests")
+    with p.activity("Open the requests"):
+
+        @p.event("Open the page")
+        async def open_page(ctx: EventContext) -> None:
+            _ = await ctx.page.goto("/page")
+
+    with (
+        p.if_("route", lambda v: v["amount"] > 100, label="amount is large"),
+        p.activity("Review the request"),
+    ):
+
+        @p.event("Review the request")
+        async def review_large(ctx: EventContext) -> None:
+            if not failed:
+                failed.append(None)
+                ctx.fail("The Review button is missing.", code="ReviewMissing")
+            trail.append("review_large")
+
+    with p.else_(), p.activity("Approve the request"):
+
+        @p.event("Approve the request")
+        async def approve_small(_ctx: EventContext) -> None:
+            trail.append("approve_small")
+
+    return p
+
+
+@pytest.mark.parametrize(
+    ("returned", "warnings"),
+    [
+        (
+            None,
+            [
+                "Continuation enters arm 'otherwise' of gateway route, "
+                + "but its conditions pick arm 'amount is large'"
+            ],
+        ),
+        ({"amount": 5}, []),
+    ],
+    ids=["conditions disagree", "conditions agree"],
+)
+async def test_resuming_inside_an_xor_arm_enters_it_and_warns_if_conditions_disagree(
+    context: BrowserContext,
+    site: FixtureServer,
+    caplog: pytest.LogCaptureFixture,
+    returned: dict[str, object] | None,
+    warnings: list[str],
+) -> None:
+    _ = site.page("/page", PAGE)
+    caplog.set_level(logging.DEBUG, logger="reparo_playwright_bridge")
+    trail: list[str] = []
+
+    result, _reparo = await recover(
+        context,
+        routing_process(trail),
+        [Continue("approve_small", [], variables=returned)],
+        variables={"amount": 500},
+    )
+
+    assert result.outcome == "completed"
+    assert trail == ["approve_small"]
+    assert [
+        r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
+    ] == warnings
+
+
+async def test_a_loop_list_reparo_broke_fails_the_continuation_as_a_process_bug(
+    context: BrowserContext, site: FixtureServer
+) -> None:
+    _ = site.page("/page", PAGE)
+
+    result, _reparo = await recover(
+        context,
+        nested_loop_process([]),
+        [Continue("handle_line", [0, 0], variables={"orders": "not a list"})],
+        variables={"orders": ORDERS},
+    )
+
+    assert result.outcome == "continuation_failed"
+    assert result.reason is not None
+    assert result.reason.startswith("Process bug: loop each_order")
