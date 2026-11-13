@@ -353,3 +353,31 @@ async def test_the_browser_going_away_during_a_recovery_ends_the_run_local(
         r.levelno == logging.ERROR and r.name.endswith(".recovery")
         for r in caplog.records
     )
+
+
+async def test_the_page_closing_while_connecting_ends_the_run_local_without_a_payload(
+    context: BrowserContext, site: FixtureServer
+) -> None:
+    _ = site.page("/page", PAGE)
+
+    async with FakeReparo([Fail("no")]) as reparo, FlakyRelay(reparo.url, 1) as relay:
+
+        async def close_during_the_backoff() -> None:
+            while relay.connections == 0:
+                await asyncio.sleep(0.02)
+            await context.pages[-1].close()
+
+        closer = asyncio.create_task(close_during_the_backoff())
+        result = await run(
+            approval_process(click_disabled),
+            context=context,
+            reparo=ReparoSettings(base_url=relay.url, robot_key=reparo.robot_key),
+            case_id=1,
+        )
+        await closer
+
+    assert result.outcome == "local"
+    assert result.reason is not None
+    assert result.reason.startswith("Environment failure: the page closed")
+    assert "Recovery of Event click_approve" in result.reason
+    assert reparo.payloads == []
