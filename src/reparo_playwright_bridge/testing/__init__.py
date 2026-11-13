@@ -15,7 +15,7 @@ from reparo_playwright_bridge.testing._server import FakeReparo, Report
 from reparo_playwright_bridge.testing._steps import (
     Close,
     Continue,
-    Decline,
+    Fail,
     SendError,
     SendRaw,
     Silence,
@@ -25,7 +25,7 @@ from reparo_playwright_bridge.testing._steps import (
 __all__ = [
     "Close",
     "Continue",
-    "Decline",
+    "Fail",
     "FakeReparo",
     "Report",
     "SendError",

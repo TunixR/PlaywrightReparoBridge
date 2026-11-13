@@ -22,7 +22,7 @@ from reparo_playwright_bridge.testing._steps import (
     TERMINAL_STEPS,
     Close,
     Continue,
-    Decline,
+    Fail,
     SendError,
     SendRaw,
     Silence,
@@ -236,8 +236,8 @@ class FakeReparo:
                         variables=echoed if step.variables is None else step.variables,
                     )
                     return
-                case Decline():
-                    testing_log.info("FakeReparo declines: %s", step.reason)
+                case Fail():
+                    testing_log.info("FakeReparo fails the Recovery: %s", step.reason)
                     await self._send_done(
                         ws,
                         success=False,

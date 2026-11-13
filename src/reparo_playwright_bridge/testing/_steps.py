@@ -19,8 +19,11 @@ class Continue:
 
 
 @dataclass(frozen=True)
-class Decline:
-    """End the Recovery: `done` with `success: false`. `reason` is only logged; the wire has no field for it."""
+class Fail:
+    """End the Recovery as failed: `done` with `success: false`, as Reparo sends when it tried and could not recover.
+
+    `reason` is only logged; the wire has no field for it.
+    """
 
     reason: str
 
@@ -52,6 +55,6 @@ class Close:
     """End the Recovery: close the socket without a `done`."""
 
 
-type Step = Continue | Decline | SendError | SendRaw | Silence | Close
+type Step = Continue | Fail | SendError | SendRaw | Silence | Close
 
-TERMINAL_STEPS = (Continue, Decline, SendError, Close)
+TERMINAL_STEPS = (Continue, Fail, SendError, Close)

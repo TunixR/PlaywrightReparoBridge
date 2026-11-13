@@ -23,7 +23,7 @@ from reparo_playwright_bridge import (
 )
 from reparo_playwright_bridge.testing import (
     Close,
-    Decline,
+    Fail,
     FakeReparo,
     Report,
     SendError,
@@ -70,12 +70,12 @@ async def _click_disabled(ctx: EventContext) -> None:
     await ctx.page.get_by_role("button", name="Approve").click(timeout=300)
 
 
-async def test_a_ui_failure_sends_one_payload_and_a_decline_ends_the_run_recovery_failed(
+async def test_a_ui_failure_sends_one_payload_and_a_failed_recovery_ends_the_run_recovery_failed(
     context: BrowserContext, site: FixtureServer
 ) -> None:
     _ = site.page("/page", PAGE)
 
-    async with FakeReparo([Decline("no idea")]) as reparo:
+    async with FakeReparo([Fail("no idea")]) as reparo:
         result = await run(
             approval_process(_click_disabled),
             context=context,
@@ -141,7 +141,7 @@ async def test_a_ui_failure_starts_a_recovery_with_a_short_code_and_one_sentence
 ) -> None:
     _ = site.page("/page", PAGE)
 
-    async with FakeReparo([Decline("no")]) as reparo:
+    async with FakeReparo([Fail("no")]) as reparo:
         result = await run(
             approval_process(body), context=context, reparo=settings(reparo), case_id=1
         )
@@ -172,7 +172,7 @@ async def test_ctx_fail_sends_its_own_code_and_description(
 ) -> None:
     _ = site.page("/page", PAGE)
 
-    async with FakeReparo([Decline("no")]) as reparo:
+    async with FakeReparo([Fail("no")]) as reparo:
         _ = await run(
             approval_process(_declared_failure),
             context=context,
@@ -208,7 +208,7 @@ async def test_process_bugs_and_environment_failures_never_reach_reparo(
 ) -> None:
     _ = site.page("/page", PAGE)
 
-    async with FakeReparo([Decline("no")]) as reparo:
+    async with FakeReparo([Fail("no")]) as reparo:
         result = await run(
             approval_process(body), context=context, reparo=settings(reparo), case_id=1
         )
@@ -256,7 +256,7 @@ async def test_an_opted_out_ui_failure_ends_local_and_logs_what_would_have_been_
     _ = site.page("/page", PAGE)
     caplog.set_level(logging.DEBUG, logger="reparo_playwright_bridge")
 
-    async with FakeReparo([Decline("no")]) as reparo:
+    async with FakeReparo([Fail("no")]) as reparo:
         result = await run(
             opted_out_process(activity=activity, event=event),
             context=context,
@@ -307,7 +307,7 @@ async def test_the_payload_carries_the_failing_events_start_snapshot_and_the_mod
     _ = site.page("/page", PAGE)
     p = snapshot_process()
 
-    async with FakeReparo([Decline("no")]) as reparo:
+    async with FakeReparo([Fail("no")]) as reparo:
         _ = await run(
             p,
             context=context,
@@ -332,7 +332,7 @@ async def test_the_model_defaults_to_bpmn(
     _ = site.page("/page", PAGE)
     p = snapshot_process()
 
-    async with FakeReparo([Decline("no")]) as reparo:
+    async with FakeReparo([Fail("no")]) as reparo:
         _ = await run(
             p,
             context=context,
@@ -349,7 +349,7 @@ async def test_entries_name_their_model_event_and_the_recovery_task_is_sent(
 ) -> None:
     _ = site.page("/page", PAGE)
 
-    async with FakeReparo([Decline("no")]) as reparo:
+    async with FakeReparo([Fail("no")]) as reparo:
         _ = await run(
             snapshot_process(),
             context=context,
@@ -369,7 +369,7 @@ async def test_no_recovery_task_is_sent_when_the_activity_declares_none(
 ) -> None:
     _ = site.page("/page", PAGE)
 
-    async with FakeReparo([Decline("no")]) as reparo:
+    async with FakeReparo([Fail("no")]) as reparo:
         _ = await run(
             approval_process(_click_disabled),
             context=context,
@@ -439,7 +439,7 @@ async def test_reparo_pings_are_ignored(
     _ = site.page("/page", PAGE)
 
     result, reparo = await recover_with(
-        context, [SendRaw({"type": "ping"}), SendRaw({"type": "ping"}), Decline("no")]
+        context, [SendRaw({"type": "ping"}), SendRaw({"type": "ping"}), Fail("no")]
     )
 
     assert result.outcome == "recovery_failed"
@@ -451,7 +451,7 @@ async def test_a_rejected_robot_key_ends_the_run_local_at_once(
 ) -> None:
     _ = site.page("/page", PAGE)
 
-    async with FakeReparo([Decline("no")]) as reparo:
+    async with FakeReparo([Fail("no")]) as reparo:
         started = time.monotonic()
         result = await run(
             approval_process(_click_disabled),
@@ -512,7 +512,7 @@ async def test_a_done_with_an_id_sets_recovery_id_and_reports_once(
 ) -> None:
     _ = site.page("/page", PAGE)
 
-    result, reparo = await recover_with(context, [Decline("no")])
+    result, reparo = await recover_with(context, [Fail("no")])
 
     assert result.recovery_id is not None
     assert reparo.reports == [Report(result.recovery_id, {"success": False})]
@@ -572,7 +572,7 @@ async def test_recovery_milestones_are_logged_at_info_without_secrets(
     _ = site.page("/page", PAGE)
     caplog.set_level(logging.DEBUG)
 
-    async with FakeReparo([Decline("no")]) as reparo:
+    async with FakeReparo([Fail("no")]) as reparo:
         _ = await run(
             snapshot_process(),
             context=context,
