@@ -20,7 +20,12 @@ from reparo_playwright_bridge._classify import FailureKind
 from reparo_playwright_bridge._context import latest_open_page
 from reparo_playwright_bridge._log import recovery_log
 from reparo_playwright_bridge._payload import Payload
-from reparo_playwright_bridge._recovery import VISION, RecoveryHandler, RecoverySession
+from reparo_playwright_bridge._recovery import (
+    VISION,
+    RecoveryHandler,
+    RecoverySession,
+    Reply,
+)
 from reparo_playwright_bridge._result import FailedOutcome, FailureType
 from reparo_playwright_bridge._settings import ReparoSettings
 
@@ -347,9 +352,7 @@ async def _serve(
                 )
 
 
-async def _send_reply(
-    ws: ClientConnection, reply: bytes | Mapping[str, object]
-) -> None:
+async def _send_reply(ws: ClientConnection, reply: Reply) -> None:
     await ws.send(reply if isinstance(reply, bytes) else json.dumps(reply))
 
 

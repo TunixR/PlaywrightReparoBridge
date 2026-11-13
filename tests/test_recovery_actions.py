@@ -154,6 +154,31 @@ async def test_the_recovery_follows_a_tab_reparo_opens_and_the_continuation_runs
     assert reparo.replies[3] == {"success": True, "action_type": "hover"}
 
 
+async def test_the_viewport_is_kept_at_its_size_while_the_recovery_runs(
+    context: BrowserContext, site: FixtureServer
+) -> None:
+    _ = site.page("/page", CHANGED_UI)
+    script: list[Step] = [Silence(0.5), Observe(), Fail("no idea")]
+
+    async with FakeReparo(script, context=context) as reparo:
+
+        async def resize_once_the_payload_is_sent() -> None:
+            while not reparo.payloads:
+                await asyncio.sleep(0.05)
+            await context.pages[-1].set_viewport_size({"width": 640, "height": 480})
+
+        resizer = asyncio.create_task(resize_once_the_payload_is_sent())
+        _ = await run(
+            approval_process(), context=context, reparo=settings(reparo), case_id=1
+        )
+        await resizer
+
+    screenshot = reparo.replies[0]
+    assert isinstance(screenshot, bytes)
+    assert jpeg_size(screenshot) == (1280, 720)
+    assert context.pages[-1].viewport_size == {"width": 1280, "height": 720}
+
+
 async def test_an_unknown_action_type_gets_a_failure_reply_and_the_recovery_goes_on(
     context: BrowserContext, site: FixtureServer
 ) -> None:

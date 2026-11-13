@@ -13,7 +13,7 @@ from types import TracebackType
 from typing import Any, Self, cast
 
 from aiohttp import WSMessage, WSMsgType, web
-from playwright.async_api import BrowserContext
+from playwright.async_api import BrowserContext, Page
 from pydantic import ValidationError
 
 from reparo_playwright_bridge._context import latest_open_page
@@ -38,6 +38,8 @@ PING_INTERVAL = 10.0
 INVALID_RECOVERY_PAYLOAD = "INVALID_RECOVERY_PAYLOAD"
 SCREENSHOT_BUDGET = 15.0
 """Seconds the robot has to answer a screenshot request."""
+ACTION_BUDGET = 60.0
+"""Seconds the robot has to answer an action, so a robot that never replies can't hang a test."""
 _CLOSING = (WSMsgType.CLOSE, WSMsgType.CLOSING, WSMsgType.CLOSED, WSMsgType.ERROR)
 
 type JsonObject = dict[str, Any]  # pyright: ignore[reportExplicitAny]  # decoded JSON holds any value
@@ -327,8 +329,11 @@ class FakeReparo:
                 + f"not the viewport's {viewport[0]}x{viewport[1]}"
             )
 
+    def _active_page(self) -> Page | None:
+        return None if self._context is None else latest_open_page(self._context)
+
     def _viewport(self) -> tuple[int, int] | None:
-        page = None if self._context is None else latest_open_page(self._context)
+        page = self._active_page()
         viewport = None if page is None else page.viewport_size
         return None if viewport is None else (viewport["width"], viewport["height"])
 
@@ -349,13 +354,19 @@ class FakeReparo:
                 "content": {"action_type": step.action_type, "action_inputs": inputs},
             }
         )
-        _ = await self._incoming.get()
+        try:
+            async with asyncio.timeout(ACTION_BUDGET):
+                _ = await self._incoming.get()
+        except TimeoutError:
+            self._violation(
+                f"no reply to a {step.action_type} action within {ACTION_BUDGET:g} s"
+            )
 
     async def _resolve(self, target: object) -> list[float]:
         """A literal point as-is, or the centre of a `Locate`'s element on the active page."""
         if not isinstance(target, Locate):
             return [float(v) for v in cast("Sequence[float]", target)]
-        page = None if self._context is None else latest_open_page(self._context)
+        page = self._active_page()
         if page is None:
             raise RuntimeError(
                 f"{target!r} needs FakeReparo(..., context=...) with an open page"
