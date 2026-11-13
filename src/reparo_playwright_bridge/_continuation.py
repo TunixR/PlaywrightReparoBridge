@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import cast
 
@@ -106,20 +106,30 @@ _Block = LoopNode | tuple[XorNode, XorArm]
 """A block around a node: a loop, or an arm of a gateway."""
 
 
-def _place(
-    sequence: SequenceNode, around: tuple[_Block, ...] = ()
-) -> Iterator[tuple[Node, tuple[_Block, ...]]]:
-    """Every node of the Process, with the blocks around it, outermost first."""
+def _find(
+    sequence: SequenceNode, node_id: str, around: list[_Block]
+) -> tuple[Node, tuple[_Block, ...]] | None:
+    """The node with `node_id` and the blocks around it, outermost first, in one depth-first pass.
+
+    `around` is the stack of blocks entered so far; the search stops at the first match.
+    """
     for node in sequence.nodes:
-        yield node, around
+        if node.id == node_id:
+            return node, tuple(around)
         match node:
             case EventNode():
-                pass
+                continue
             case LoopNode():
-                yield from _place(node.body, (*around, node))
+                bodies = [(node, node.body)]
             case XorNode():
-                for arm in node.arms:
-                    yield from _place(arm.body, (*around, (node, arm)))
+                bodies = [((node, arm), arm.body) for arm in node.arms]
+        for block, body in bodies:
+            around.append(block)
+            found = _find(body, node_id, around)
+            _ = around.pop()
+            if found is not None:
+                return found
+    return None
 
 
 def resolve(
@@ -157,10 +167,10 @@ def _locate(
     event_id = answer.continue_from_model_event_id
     if event_id is None:
         return Rejected(f"{_ANSWER} names no Event and does not finish the Process")
-    by_id = {node.id: (node, around) for node, around in _place(definition.root)}
-    if event_id not in by_id:
+    found = _find(definition.root, event_id, [])
+    if found is None:
         return Rejected(f"{_ANSWER} names {event_id!r}, which is not an Event id")
-    node, around = by_id[event_id]
+    node, around = found
     match node:
         case LoopNode():
             return Rejected(f"{_ANSWER} names loop {event_id}, not an Event")
