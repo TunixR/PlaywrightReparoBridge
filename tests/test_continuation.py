@@ -689,3 +689,104 @@ async def test_a_loop_list_reparo_broke_fails_the_continuation_as_a_process_bug(
     assert result.outcome == "continuation_failed"
     assert result.reason is not None
     assert result.reason.startswith("Process bug: loop each_order")
+
+
+BIG_ORDERS = [["a0", "a1"], ["b0", "b1", "b2"], ["c0", "c1", "c2"]]
+
+
+def loop_xor_loop_process(trail: list[str]) -> Process:
+    """`each_order` over `orders`: `note_order`, then gateway `size`.
+
+    A big order (over 2 lines) runs `flag_order`, then `each_line` over the order itself, holding
+    `handle_line`, a UI failure the first time it sees b1. Otherwise, `pass_order` runs.
+    Each Event appends what it handled to `trail`.
+    """
+    failed: list[None] = []
+    p = Process("handle orders by size")
+    with p.activity("Open the orders"):
+
+        @p.event("Open the page")
+        async def open_page(ctx: EventContext) -> None:
+            _ = await ctx.page.goto("/page")
+
+    with p.for_each("each_order", over="orders", as_="order"):
+        with p.activity("Note the order"):
+
+            @p.event("Note the order")
+            async def note_order(ctx: EventContext) -> None:
+                trail.append(f"note {ctx.vars['order'][0][0]}")
+
+        with p.if_("size", lambda v: len(v["order"]) > 2, label="big order"):
+            with p.activity("Flag the order"):
+
+                @p.event("Flag the order")
+                async def flag_order(ctx: EventContext) -> None:
+                    trail.append(f"flag {ctx.vars['order'][0][0]}")
+
+            with (
+                p.for_each("each_line", over="order", as_="line"),
+                p.activity("Handle the line"),
+            ):
+
+                @p.event("Handle the line")
+                async def handle_line(ctx: EventContext) -> None:
+                    line = ctx.vars["line"]
+                    if line == "b1" and not failed:
+                        failed.append(None)
+                        ctx.fail("The line is locked.", code="LineLocked")
+                    trail.append(line)
+
+        with p.else_(), p.activity("Pass the order"):
+
+            @p.event("Pass the order")
+            async def pass_order(ctx: EventContext) -> None:
+                trail.append(f"pass {ctx.vars['order'][0][0]}")
+
+    return p
+
+
+@pytest.mark.parametrize(
+    ("passes", "resumed", "warnings"),
+    [
+        ([1, 1], ["b1", "b2"], []),
+        (
+            [0, 1],
+            ["a1", "note b", "flag b", "b0", "b1", "b2"],
+            [
+                "Continuation enters arm 'big order' of gateway size, "
+                + "but its conditions pick arm 'otherwise'"
+            ],
+        ),
+    ],
+    ids=["conditions agree", "conditions disagree"],
+)
+async def test_resuming_in_a_loop_inside_an_xor_arm_inside_a_loop(
+    context: BrowserContext,
+    site: FixtureServer,
+    caplog: pytest.LogCaptureFixture,
+    passes: list[int],
+    resumed: list[str],
+    warnings: list[str],
+) -> None:
+    _ = site.page("/page", PAGE)
+    caplog.set_level(logging.DEBUG, logger="reparo_playwright_bridge")
+    trail: list[str] = []
+
+    result, _reparo = await recover(
+        context,
+        loop_xor_loop_process(trail),
+        [Continue("handle_line", passes)],
+        variables={"orders": BIG_ORDERS},
+    )
+
+    assert result.outcome == "completed"
+    # Up to the failure at b1; from the named passes, skipping the Events before the resumed one;
+    # then the next order runs in full, its gateway decided by its conditions.
+    assert trail == [
+        *["note a", "pass a", "note b", "flag b", "b0"],
+        *resumed,
+        *["note c", "flag c", "c0", "c1", "c2"],
+    ]
+    assert [
+        r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
+    ] == warnings
