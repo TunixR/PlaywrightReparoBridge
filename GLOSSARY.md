@@ -105,7 +105,7 @@ _Avoid_: final assertion, verification step.
 **Run outcome**: How a run of a **Process** ends: completed (the **Completion checks** passed),
 checks failed (the Process reached its end but a Completion check was not met), or failed before
 reaching its end. A failed run is further told apart by when it failed relative to a **Recovery**:
-before any, because Reparo declined or could not be reached, because Reparo's answer could not be
+before any, because Reparo tried and could not recover it or could not be reached, because Reparo's answer could not be
 continued from, or during the **Continuation**. Only a completed run counts as a successful
 Recovery when its result is reported to Reparo.
 _Avoid_: status, result (alone).

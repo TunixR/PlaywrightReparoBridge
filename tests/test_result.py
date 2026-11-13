@@ -47,10 +47,10 @@ from reparo_playwright_bridge import Failure, RunResult
         ),
         (
             RunResult(
-                outcome="recovery_declined",
-                reason="Reparo declined the Recovery: no Approve button",
+                outcome="recovery_failed",
+                reason="Reparo could not recover the failure: no Approve button",
                 failure=Failure(
-                    type="recovery_declined",
+                    type="recovery_failed",
                     event_id="click_approve",
                     loop_iteration=[0],
                     error_code="ElementNotFound",
@@ -58,7 +58,7 @@ from reparo_playwright_bridge import Failure, RunResult
                 ),
                 recovery_id="r-2",
             ),
-            "recovery_declined at click_approve #0, Recovery r-2: Reparo declined the Recovery: no Approve button",
+            "recovery_failed at click_approve #0, Recovery r-2: Reparo could not recover the failure: no Approve button",
         ),
         (
             RunResult(
@@ -146,7 +146,7 @@ def test_round_trips_through_json() -> None:
         {"outcome": "local", "reason": "boom"},
         {"outcome": "local", "reason": "boom", "failure": Failure(type="timeout")},
         {
-            "outcome": "recovery_declined",
+            "outcome": "recovery_failed",
             "reason": "no",
             "failure": Failure(type="local"),
         },

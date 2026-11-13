@@ -70,7 +70,7 @@ async def _click_disabled(ctx: EventContext) -> None:
     await ctx.page.get_by_role("button", name="Approve").click(timeout=300)
 
 
-async def test_a_ui_failure_sends_one_payload_and_a_decline_ends_the_run_declined(
+async def test_a_ui_failure_sends_one_payload_and_a_decline_ends_the_run_recovery_failed(
     context: BrowserContext, site: FixtureServer
 ) -> None:
     _ = site.page("/page", PAGE)
@@ -83,9 +83,9 @@ async def test_a_ui_failure_sends_one_payload_and_a_decline_ends_the_run_decline
             case_id=7,
         )
 
-    assert result.outcome == "recovery_declined"
+    assert result.outcome == "recovery_failed"
     assert result.failure is not None
-    assert result.failure.type == "recovery_declined"
+    assert result.failure.type == "recovery_failed"
     assert result.failure.event_id == "click_approve"
     assert len(reparo.payloads) == 1
     payload = reparo.payloads[0]
@@ -146,7 +146,7 @@ async def test_a_ui_failure_starts_a_recovery_with_a_short_code_and_one_sentence
             approval_process(body), context=context, reparo=settings(reparo), case_id=1
         )
 
-    assert result.outcome == "recovery_declined"
+    assert result.outcome == "recovery_failed"
     errored = reparo.payloads[0]["errored_act"]
     code, description = errored["error_code"], errored["error_description"]
     assert re.fullmatch(r"[A-Za-z]{3,40}", code)
@@ -442,7 +442,7 @@ async def test_reparo_pings_are_ignored(
         context, [SendRaw({"type": "ping"}), SendRaw({"type": "ping"}), Decline("no")]
     )
 
-    assert result.outcome == "recovery_declined"
+    assert result.outcome == "recovery_failed"
     assert reparo.replies == []
 
 
@@ -517,7 +517,7 @@ async def test_a_done_with_an_id_sets_recovery_id_and_reports_once(
     assert result.recovery_id is not None
     assert reparo.reports == [Report(result.recovery_id, {"success": False})]
     assert str(result).startswith(
-        f"recovery_declined at click_approve, Recovery {result.recovery_id}"
+        f"recovery_failed at click_approve, Recovery {result.recovery_id}"
     )
 
 
@@ -541,7 +541,7 @@ async def test_a_failed_report_logs_a_warning_and_keeps_the_outcome(
 
     result, reparo = await recover_with(context, [SendRaw(done), Close()])
 
-    assert result.outcome == "recovery_declined"
+    assert result.outcome == "recovery_failed"
     assert result.recovery_id == unknown_id
     assert reparo.reports == []
     warnings = [

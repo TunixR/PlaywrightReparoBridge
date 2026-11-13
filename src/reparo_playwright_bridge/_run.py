@@ -309,9 +309,9 @@ class _Run:
             extra=extra,
         )
         if not answer.content.success:
-            failure.type = "recovery_declined"
+            failure.type = "recovery_failed"
             return RunResult(
-                outcome="recovery_declined",
+                outcome="recovery_failed",
                 reason="Reparo could not recover the failure",
                 failure=failure,
                 recovery_id=answer.recovery_id,
