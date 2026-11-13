@@ -2,31 +2,27 @@
 
 from __future__ import annotations
 
-from typing import Literal, Self, override
+from typing import Literal, Self, get_args, override
 
 from pydantic import BaseModel, model_validator
 
-Outcome = Literal[
-    "completed",
-    "checks_failed",
-    "local",
-    "recovery_failed",
-    "recovery_unavailable",
-    "continuation_rejected",
-    "continuation_failed",
-]
+ReachedEnd = Literal["completed", "checks_failed"]
+"""The outcomes of a run that reached its end; they come with no Failure."""
 
-FailureType = Literal[
-    "local",
-    "recovery_failed",
-    "recovery_unavailable",
-    "continuation_rejected",
-    "continuation_failed",
-    "payload_rejected",
-    "timeout",
-]
+LocalOutcome = Literal["local", "continuation_failed"]
+"""How a run fails locally: `local`, or `continuation_failed` once a Continuation resumed it."""
 
-_REACHED_END: frozenset[Outcome] = frozenset({"completed", "checks_failed"})
+FailedOutcome = Literal[
+    LocalOutcome, "recovery_failed", "recovery_unavailable", "continuation_rejected"
+]
+"""The outcomes of a run that didn't reach its end; each comes with a Failure."""
+
+Outcome = Literal[ReachedEnd, FailedOutcome]
+
+FailureType = Literal[FailedOutcome, "payload_rejected", "timeout"]
+"""A failed outcome, or a sub-cause of one."""
+
+_REACHED_END: frozenset[Outcome] = frozenset(get_args(ReachedEnd))
 _SUB_CAUSES: dict[Outcome, frozenset[FailureType]] = {
     "recovery_unavailable": frozenset({"payload_rejected", "timeout"}),
 }
@@ -54,6 +50,31 @@ class RunResult(BaseModel):
     reason: str | None = None
     failure: Failure | None = None
     recovery_id: str | None = None
+
+    @classmethod
+    def failed(
+        cls,
+        outcome: FailedOutcome,
+        reason: str,
+        *,
+        failure: Failure | None = None,
+        sub_cause: FailureType | None = None,
+        recovery_id: str | None = None,
+    ) -> Self:
+        """A failed run. Its failure's `type` is `sub_cause` if given, else the outcome.
+
+        `failure` carries where it failed (Event, pass, error code); its own `type` is replaced.
+        Without it, the run failed outside any Event.
+        """
+        failure_type: FailureType = sub_cause or outcome
+        located = (
+            Failure(type=failure_type)
+            if failure is None
+            else failure.model_copy(update={"type": failure_type})
+        )
+        return cls(
+            outcome=outcome, reason=reason, failure=located, recovery_id=recovery_id
+        )
 
     @model_validator(mode="after")
     def _consistent(self) -> Self:

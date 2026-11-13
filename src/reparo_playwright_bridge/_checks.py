@@ -9,11 +9,11 @@ from typing import cast
 
 from playwright.async_api import BrowserContext
 
-from reparo_playwright_bridge._classify import FailureKind, classify
+from reparo_playwright_bridge._classify import FailureKind, classify_outside_event
 from reparo_playwright_bridge._context import CheckContext, Variables, active_page
 from reparo_playwright_bridge._definition import CompletionCheck
 from reparo_playwright_bridge._log import checks_log
-from reparo_playwright_bridge._result import Failure, RunResult
+from reparo_playwright_bridge._result import LocalOutcome, RunResult
 
 
 class _BadReturn(Exception):
@@ -47,11 +47,12 @@ async def run_checks(
     context: BrowserContext,
     variables: Variables,
     case_id: str | int,
+    failed_outcome: LocalOutcome,
 ) -> RunResult:
     """Run every check in declaration order: `completed` if all are met, else `checks_failed`.
 
     A check that raises or returns anything else crashes: it stops the remaining checks and ends
-    the run `local`, as a Process bug unless it hit an Environment failure.
+    the run `failed_outcome`, as a Process bug unless it hit an Environment failure.
     """
     extra: dict[str, object] = {"case_id": case_id}
     unmet: list[str] = []
@@ -62,7 +63,7 @@ async def run_checks(
             view = MappingProxyType(copy.deepcopy(variables))
             reason = _unmet_reason(await check.fn(CheckContext(page, view)))
         except Exception as exc:  # noqa: BLE001  # a crashing check, never re-raised
-            return _crashed(check, exc, extra)
+            return _crashed(check, exc, extra, failed_outcome)
         if reason is None:
             checks_log.info("Completion check %s met", check.id, extra=extra)
         else:
@@ -81,19 +82,16 @@ async def run_checks(
 
 
 def _crashed(
-    check: CompletionCheck, exc: Exception, extra: dict[str, object]
+    check: CompletionCheck,
+    exc: Exception,
+    extra: dict[str, object],
+    failed_outcome: LocalOutcome,
 ) -> RunResult:
     if isinstance(exc, _BadReturn):
         kind, summary = FailureKind.PROCESS_BUG, str(exc)
     else:
-        classified = classify(exc)
-        # Only an Environment failure keeps its class; a UI failure in a check is the check's own bug.
-        kind = (
-            classified.kind
-            if classified.kind is FailureKind.ENVIRONMENT
-            else FailureKind.PROCESS_BUG
-        )
-        summary = classified.summary
+        classified = classify_outside_event(exc)
+        kind, summary = classified.kind, classified.summary
     checks_log.error(
         "Completion check %s crashed: %s (%s)",
         check.id,
@@ -102,8 +100,6 @@ def _crashed(
         exc_info=None if isinstance(exc, _BadReturn) else exc,
         extra=extra,
     )
-    return RunResult(
-        outcome="local",
-        reason=f"{kind.value}: completion check {check.id} crashed: {summary}",
-        failure=Failure(type="local"),
+    return RunResult.failed(
+        failed_outcome, f"{kind.value}: completion check {check.id} crashed: {summary}"
     )

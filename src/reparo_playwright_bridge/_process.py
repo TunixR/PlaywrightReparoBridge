@@ -16,6 +16,7 @@ from reparo_playwright_bridge._definition import (
     CheckFn,
     CompletionCheck,
     Condition,
+    ContinuationHook,
     EventFn,
     EventNode,
     LoopNode,
@@ -176,6 +177,21 @@ class Process:
             return fn
 
         return register
+
+    def on_continuation(self, fn: ContinuationHook) -> ContinuationHook:
+        """Register the decorated function as the hook that decides a Continuation's Variables.
+
+        It is called as `fn(returned, local)`: `returned` holds the Variables Reparo returned,
+        `local` the failing Event's start snapshot. What it returns is the Variables the run
+        resumes with. Without a hook, returned keys override local ones key by key.
+        A Process takes at most one hook.
+        """
+        if self._definition.on_continuation is not None:
+            raise ValueError(
+                f"p.on_continuation is already registered; a Process takes at most one hook, got {getattr(fn, '__name__', fn)!r} too"
+            )
+        self._definition.on_continuation = fn
+        return fn
 
     @contextmanager
     def for_each(self, id: str, *, over: str, as_: str) -> Generator[None]:

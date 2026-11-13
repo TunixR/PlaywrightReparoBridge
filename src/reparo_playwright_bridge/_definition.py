@@ -71,6 +71,12 @@ class XorNode:
 
 Node = EventNode | LoopNode | XorNode
 
+ContinuationHook = Callable[
+    [Mapping[str, Any], Mapping[str, Any]],  # pyright: ignore[reportExplicitAny]
+    Mapping[str, Any],  # pyright: ignore[reportExplicitAny]
+]
+"""`(returned, local) -> Variables`: decides the Variables a Continuation resumes with."""
+
 
 @dataclass(frozen=True)
 class CompletionCheck:
@@ -88,6 +94,7 @@ class ProcessDefinition:
     root: SequenceNode = field(default_factory=SequenceNode)
     checks: list[CompletionCheck] = field(default_factory=list)
     """The Completion checks, in declaration order."""
+    on_continuation: ContinuationHook | None = None
 
 
 ELSE_LABEL = "otherwise"
