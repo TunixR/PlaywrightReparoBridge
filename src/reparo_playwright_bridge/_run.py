@@ -22,6 +22,7 @@ from reparo_playwright_bridge._continuation import (
     HookCrashed,
     Rejected,
     Resume,
+    Target,
     resolve,
 )
 from reparo_playwright_bridge._definition import (
@@ -30,6 +31,7 @@ from reparo_playwright_bridge._definition import (
     LoopNode,
     ProcessDefinition,
     SequenceNode,
+    XorArm,
     XorNode,
 )
 from reparo_playwright_bridge._log import recovery_log, run_log
@@ -147,9 +149,9 @@ class _Run:
             variables = stop.variables
             stop = (
                 None  # process_finished: no more Events, only the Completion checks
-                if stop.event is None
+                if stop.target is None
                 else await self._sequence(
-                    self.definition.root, variables, (), start=stop.event
+                    self.definition.root, variables, (), start=stop.target
                 )
             )
         # Only the run's one Recovery resumes it: after it, a UI failure is never handed over.
@@ -179,47 +181,84 @@ class _Run:
         variables: Variables,
         passes: Passes,
         *,
-        start: EventNode | None = None,
+        start: Target | None = None,
     ) -> _Stop | None:
+        """Run `sequence`; with `start`, from the node that leads to it."""
         for node in sequence.nodes:
+            enter: Target | None = None
             if start is not None:
-                if node is not start:
+                if node is not start.head:
                     continue
-                start = None
+                enter, start = start, None
             match node:
                 case EventNode():
                     failure = await self._event(node, variables, passes)
                 case LoopNode():
-                    failure = await self._loop(node, variables, passes)
+                    failure = await self._loop(node, variables, passes, enter)
                 case XorNode():
-                    failure = await self._xor(node, variables, passes)
+                    failure = await self._xor(node, variables, passes, enter)
             if failure is not None:
                 return failure
         return None
 
     async def _xor(
-        self, xor: XorNode, variables: Variables, passes: Passes
+        self,
+        xor: XorNode,
+        variables: Variables,
+        passes: Passes,
+        enter: Target | None,
     ) -> _Stop | None:
+        picked = self._pick(xor, variables, passes)
+        if isinstance(picked, RunResult):
+            return picked
+        if enter is None:
+            if picked is None:
+                return None
+            return await self._sequence(picked.body, variables, passes)
+        # Reparo's decision wins: enter the arm it named, whatever the conditions say.
+        arm = enter.arm
+        if picked is not arm:
+            run_log.warning(
+                "Continuation enters arm %r of gateway %s, but its conditions pick %s",
+                arm.label,
+                xor.id,
+                "no arm" if picked is None else f"arm {picked.label!r}",
+                extra={"case_id": self.case_id, "loop_iteration": list(passes)},
+            )
+        return await self._sequence(arm.body, variables, passes, start=enter.inner)
+
+    def _pick(
+        self, xor: XorNode, variables: Variables, passes: Passes
+    ) -> XorArm | RunResult | None:
+        """The first arm whose condition holds, or None; a condition that raises is a Process bug."""
         # Conditions get the Variables read-only: they are pure functions of them.
         view = MappingProxyType(variables)
         for arm in xor.arms:
-            if arm.condition is not None:
-                try:
-                    holds = bool(arm.condition(view))
-                except Exception as exc:  # noqa: BLE001  # a Process bug, never re-raised
-                    return self._control_flow_bug(
-                        f"condition {arm.label!r} of gateway {xor.id}", exc, passes
-                    )
-                if not holds:
-                    continue
-            return await self._sequence(arm.body, variables, passes)
+            if arm.condition is None:
+                return arm
+            try:
+                holds = bool(arm.condition(view))
+            except Exception as exc:  # noqa: BLE001  # a Process bug, never re-raised
+                return self._control_flow_bug(
+                    f"condition {arm.label!r} of gateway {xor.id}", exc, passes
+                )
+            if holds:
+                return arm
         return None
 
     async def _loop(
-        self, loop: LoopNode, variables: Variables, passes: Passes
+        self,
+        loop: LoopNode,
+        variables: Variables,
+        passes: Passes,
+        enter: Target | None,
     ) -> _Stop | None:
         # The list is re-read on every pass: pass i always binds the current vars[over][i].
         index = 0
+        inner: Target | None = None
+        if enter is not None:
+            index = enter.pass_
+            inner = enter.inner
         while True:
             try:
                 items = cast("object", variables[loop.over])
@@ -237,7 +276,10 @@ class _Run:
                     exc,
                     passes,
                 )
-            failure = await self._sequence(loop.body, variables, (*passes, index))
+            failure = await self._sequence(
+                loop.body, variables, (*passes, index), start=inner
+            )
+            inner = None
             if failure is not None:
                 return failure
             index += 1
@@ -427,11 +469,11 @@ class _Run:
             case Resume():
                 pass
         self._recovery_id = answer.recovery_id
-        if resolved.event is None:
+        if resolved.target is None:
             where = "the Process is finished"
         else:
             passes = tuple(content.loop_iteration)
-            where = f"resuming at Event {resolved.event.id}{pass_suffix(passes)}"
+            where = f"resuming at Event {resolved.target.event.id}{pass_suffix(passes)}"
         recovery_log.info(
             "Continuation: %s; %s",
             where,

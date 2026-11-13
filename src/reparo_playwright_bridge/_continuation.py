@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import cast
 
@@ -14,6 +14,7 @@ from reparo_playwright_bridge._definition import (
     Node,
     ProcessDefinition,
     SequenceNode,
+    XorArm,
     XorNode,
 )
 from reparo_playwright_bridge._protocol import ContinuationContent
@@ -23,10 +24,64 @@ _ANSWER = "Reparo's Continuation"
 
 
 @dataclass(frozen=True)
+class InLoop:
+    """The resume point is inside `loop`, in pass `pass_`."""
+
+    loop: LoopNode
+    pass_: int
+
+
+@dataclass(frozen=True)
+class InArm:
+    """The resume point is inside `arm` of `xor`."""
+
+    xor: XorNode
+    arm: XorArm
+
+
+Enclosing = InLoop | InArm
+
+
+@dataclass(frozen=True)
+class Target:
+    """An Event to resume at, and the blocks the engine enters to reach it, outermost first."""
+
+    event: EventNode
+    within: tuple[Enclosing, ...] = ()
+
+    @property
+    def head(self) -> Node:
+        """The node of the enclosing sequence the engine starts at."""
+        if not self.within:
+            return self.event
+        first = self.within[0]
+        return first.loop if isinstance(first, InLoop) else first.xor
+
+    @property
+    def pass_(self) -> int:
+        """The pass of the loop at the head."""
+        first = self.within[0]
+        assert isinstance(first, InLoop)
+        return first.pass_
+
+    @property
+    def arm(self) -> XorArm:
+        """The arm of the gateway at the head."""
+        first = self.within[0]
+        assert isinstance(first, InArm)
+        return first.arm
+
+    @property
+    def inner(self) -> Target:
+        """This target, seen from inside the block at its head."""
+        return Target(self.event, self.within[1:])
+
+
+@dataclass(frozen=True)
 class Resume:
     """Where the engine resumes, and with which Variables."""
 
-    event: EventNode | None
+    target: Target | None
     """None when Reparo finished the Process: no more Events run."""
     variables: Variables
     changed: list[str]
@@ -47,29 +102,34 @@ class HookCrashed:
     exc: Exception
 
 
-@dataclass(frozen=True)
-class _Placed:
-    """A node of the Process, with the blocks around it."""
-
-    node: Node
-    loop_depth: int
-    nested: bool
-    """Inside a loop or an XOR arm."""
+_Block = LoopNode | tuple[XorNode, XorArm]
+"""A block around a node: a loop, or an arm of a gateway."""
 
 
-def _place(
-    sequence: SequenceNode, depth: int = 0, nested: bool = False
-) -> Iterator[tuple[str, _Placed]]:
+def _find(
+    sequence: SequenceNode, node_id: str, around: list[_Block]
+) -> tuple[Node, tuple[_Block, ...]] | None:
+    """The node with `node_id` and the blocks around it, outermost first, in one depth-first pass.
+
+    `around` is the stack of blocks entered so far; the search stops at the first match.
+    """
     for node in sequence.nodes:
-        yield node.id, _Placed(node, depth, nested)
+        if node.id == node_id:
+            return node, tuple(around)
         match node:
             case EventNode():
-                pass
+                continue
             case LoopNode():
-                yield from _place(node.body, depth + 1, True)
+                bodies = [(node, node.body)]
             case XorNode():
-                for arm in node.arms:
-                    yield from _place(arm.body, depth, True)
+                bodies = [((node, arm), arm.body) for arm in node.arms]
+        for block, body in bodies:
+            around.append(block)
+            found = _find(body, node_id, around)
+            _ = around.pop()
+            if found is not None:
+                return found
+    return None
 
 
 def resolve(
@@ -81,47 +141,85 @@ def resolve(
 
     `snapshot` is the failing Event's start snapshot.
     """
-    event: EventNode | None = None
+    located: tuple[EventNode, tuple[_Block, ...]] | None = None
     if not answer.process_finished:
-        located = _locate(definition, answer)
-        if isinstance(located, Rejected):
-            return located
-        event = located
+        found = _locate(definition, answer)
+        if isinstance(found, Rejected):
+            return found
+        located = found
     try:
         variables = _decide(definition, answer.variables, snapshot)
     except Exception as exc:  # noqa: BLE001  # the hook's own failure, reported by the engine
         return HookCrashed(exc)
-    return Resume(event, variables, _changed(variables, snapshot))
+    target: Target | None = None
+    if located is not None:
+        event, around = located
+        entered = _enter(event, around, answer.loop_iteration, variables)
+        if isinstance(entered, Rejected):
+            return entered
+        target = entered
+    return Resume(target, variables, _changed(variables, snapshot))
 
 
 def _locate(
     definition: ProcessDefinition, answer: ContinuationContent
-) -> EventNode | Rejected:
+) -> tuple[EventNode, tuple[_Block, ...]] | Rejected:
     event_id = answer.continue_from_model_event_id
     if event_id is None:
         return Rejected(f"{_ANSWER} names no Event and does not finish the Process")
-    placed = dict(_place(definition.root)).get(event_id)
-    if placed is None:
+    found = _find(definition.root, event_id, [])
+    if found is None:
         return Rejected(f"{_ANSWER} names {event_id!r}, which is not an Event id")
-    match placed.node:
+    node, around = found
+    match node:
         case LoopNode():
             return Rejected(f"{_ANSWER} names loop {event_id}, not an Event")
         case XorNode():
             return Rejected(f"{_ANSWER} names gateway {event_id}, not an Event")
         case EventNode() as event:
             pass
+    depth = sum(isinstance(block, LoopNode) for block in around)
     passes = answer.loop_iteration
-    if len(passes) != placed.loop_depth:
+    if len(passes) != depth:
         return Rejected(
             f"{_ANSWER} gives {len(passes)} loop passes for Event {event_id}, "
-            + f"which is inside {placed.loop_depth} loops"
+            + f"which is inside {depth} loops"
         )
-    if placed.nested:
-        return Rejected(
-            f"{_ANSWER} names Event {event_id}, inside a loop or a branch; "
-            + "resuming there is not supported yet"
-        )
-    return event
+    return event, around
+
+
+def _enter(
+    event: EventNode,
+    around: tuple[_Block, ...],
+    passes: list[int],
+    variables: Variables,
+) -> Target | Rejected:
+    """The path to `event` in the named passes, rebinding each loop item Variable on the way.
+
+    A loop list that is missing or not a list is left for the engine, whose binding fails on it
+    as a Process bug; the loops inside it are then not checked either.
+    """
+    remaining = iter(passes)
+    within: list[Enclosing] = []
+    checking = True
+    for block in around:
+        if not isinstance(block, LoopNode):
+            within.append(InArm(*block))
+            continue
+        pass_ = next(remaining)
+        within.append(InLoop(block, pass_))
+        items = variables.get(block.over)
+        if not checking or not isinstance(items, list):
+            checking = False
+            continue
+        items = cast("list[object]", items)
+        if not 0 <= pass_ < len(items):
+            return Rejected(
+                f"{_ANSWER} names pass {pass_} of loop {block.id}, "
+                + f"but {block.over} has {len(items)} items"
+            )
+        variables[block.as_] = items[pass_]
+    return Target(event, tuple(within))
 
 
 def _decide(
