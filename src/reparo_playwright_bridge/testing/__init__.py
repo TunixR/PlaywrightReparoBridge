@@ -11,11 +11,18 @@ except ImportError as exc:  # pragma: no cover - exercised in a subprocess
         + 'pip install "reparo-playwright-bridge[fake]"'
     ) from exc
 
-from reparo_playwright_bridge.testing._server import FakeReparo, Report
+from reparo_playwright_bridge.testing._server import (
+    FakeReparo,
+    FakeReparoError,
+    Report,
+)
 from reparo_playwright_bridge.testing._steps import (
+    Act,
     Close,
     Continue,
     Fail,
+    Locate,
+    Observe,
     SendError,
     SendRaw,
     Silence,
@@ -23,10 +30,14 @@ from reparo_playwright_bridge.testing._steps import (
 )
 
 __all__ = [
+    "Act",
     "Close",
     "Continue",
     "Fail",
     "FakeReparo",
+    "FakeReparoError",
+    "Locate",
+    "Observe",
     "Report",
     "SendError",
     "SendRaw",
