@@ -237,8 +237,9 @@ def page_watcher(
     return p
 
 
-async def _nothing(_ctx: EventContext) -> None:
-    pass
+async def _read_page(ctx: EventContext) -> None:
+    """An Event's least logged call: one read."""
+    _ = await ctx.page.locator("body").inner_text()
 
 
 async def test_the_bridge_opens_a_page_only_if_the_context_has_none(
@@ -247,7 +248,7 @@ async def test_the_bridge_opens_a_page_only_if_the_context_has_none(
     seen: list[str] = []
 
     result = await run(
-        page_watcher([_nothing, _nothing], seen),
+        page_watcher([_read_page, _read_page], seen),
         context=context,
         reparo=reparo,
         case_id=1,
@@ -268,7 +269,7 @@ async def test_ctx_page_is_the_most_recently_opened_page(
     seen: list[str] = []
 
     result = await run(
-        page_watcher([_nothing], seen), context=context, reparo=reparo, case_id=1
+        page_watcher([_read_page], seen), context=context, reparo=reparo, case_id=1
     )
 
     assert result.outcome == "completed"
@@ -294,7 +295,7 @@ async def test_an_event_that_opens_a_tab_leaves_the_next_event_on_that_tab(
     bodies: list[Callable[[EventContext], Awaitable[None]]] = [
         open_list,
         open_detail_in_a_tab,
-        _nothing,
+        _read_page,
     ]
     result = await run(
         page_watcher(bodies, seen), context=context, reparo=reparo, case_id=1
@@ -313,10 +314,11 @@ async def test_an_event_that_closes_its_page_leaves_the_next_event_on_the_previo
     seen: list[str] = []
 
     async def close_it(ctx: EventContext) -> None:
+        await _read_page(ctx)
         await ctx.page.close()
 
     result = await run(
-        page_watcher([close_it, _nothing], seen),
+        page_watcher([close_it, _read_page], seen),
         context=context,
         reparo=reparo,
         case_id=1,
@@ -509,13 +511,13 @@ async def test_a_failure_while_finding_the_active_page_is_still_a_result(
     await closed.close()
     p = Process("p")
     with p.activity("A"):
-        _ = p.event("Do nothing")(_nothing)
+        _ = p.event("Do nothing")(_read_page)
 
     result = await run(p, context=closed, reparo=reparo, case_id=1)
 
     assert result.outcome == "local"
     assert result.failure is not None
-    assert result.failure.event_id == "_nothing"
+    assert result.failure.event_id == "_read_page"
     assert result.reason is not None
     assert result.reason.startswith("Environment failure: ")
 
@@ -529,6 +531,7 @@ async def _note(ctx: EventContext, text: str) -> None:
     """Append `text` to the page's log, so the test reads what ran from the page."""
     script = "t => document.querySelector('#log').append(Object.assign(document.createElement('li'), {textContent: t}))"
     await ctx.page.evaluate(script, text)
+    _ = await ctx.page.locator("#log").inner_text()  # the Event's logged call
 
 
 async def _page_log(context: BrowserContext) -> list[str]:

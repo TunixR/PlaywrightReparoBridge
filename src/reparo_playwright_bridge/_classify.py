@@ -14,6 +14,10 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from reparo_playwright_bridge._context import EXPECTATION_NOT_MET, UIFailure
 
 
+class ProcessBug(Exception):
+    """A rule of the Process broken at run time, detected by the bridge; its message says which."""
+
+
 class FailureKind(enum.Enum):
     UI = "UI failure"
     ENVIRONMENT = "Environment failure"
@@ -144,6 +148,8 @@ def _raised_by_playwright_expect(exc: BaseException) -> bool:
 def classify(exc: BaseException) -> Classified:
     if isinstance(exc, UIFailure):
         return Classified(FailureKind.UI, exc.description, exc.code)
+    if isinstance(exc, ProcessBug):
+        return Classified(FailureKind.PROCESS_BUG, str(exc))
     if isinstance(exc, PlaywrightError):
         # Only the first line is the error; the rest is Playwright's call log, which
         # repeats selectors and so can contain any text. Shapes whose first line quotes
