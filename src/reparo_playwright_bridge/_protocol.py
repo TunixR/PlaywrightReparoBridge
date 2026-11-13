@@ -14,7 +14,7 @@ from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidSta
 
 from reparo_playwright_bridge._log import recovery_log
 from reparo_playwright_bridge._payload import Payload
-from reparo_playwright_bridge._result import FailureType, Outcome
+from reparo_playwright_bridge._result import FailedOutcome, FailureType
 from reparo_playwright_bridge._settings import ReparoSettings
 
 ROBOT_KEY_HEADER = "X-ROBOT-KEY"
@@ -42,17 +42,10 @@ class ContinuationContent(BaseModel):
 
 
 @dataclass(frozen=True)
-class LegacyContinuation:
-    """Today's `done.content` (Reparo's `ResponseToRPA` with `continue_from_step`), which names no Event."""
-
-    success: bool
-
-
-@dataclass(frozen=True)
 class Done:
     """Reparo ended the Recovery with a well-formed `done`."""
 
-    content: ContinuationContent | LegacyContinuation
+    content: ContinuationContent
     recovery_id: str
 
 
@@ -60,7 +53,7 @@ class Done:
 class Ended:
     """The Recovery ended without a usable `done`."""
 
-    outcome: Outcome
+    outcome: FailedOutcome
     failure_type: FailureType
     reason: str
 
@@ -150,24 +143,15 @@ def _decode(frame: str | bytes) -> dict[str, object] | None:
 
 def _done(message: dict[str, object]) -> Done | Ended:
     recovery_id = message.get("id")
-    raw = message.get("content")
-    content: ContinuationContent | LegacyContinuation | None
     try:
-        content = ContinuationContent.model_validate(raw)
+        content = ContinuationContent.model_validate(message.get("content"))
     except ValidationError:
-        content = _legacy(raw)
+        content = None
     if content is None or not isinstance(recovery_id, str) or not recovery_id:
         return Ended.unavailable(
             "Reparo sent a done without a Continuation and a Recovery id"
         )
     return Done(content, recovery_id)
-
-
-def _legacy(raw: object) -> LegacyContinuation | None:
-    if not isinstance(raw, dict) or "continue_from_step" not in raw:
-        return None
-    success = cast("dict[str, object]", raw).get("success")
-    return LegacyContinuation(success) if isinstance(success, bool) else None
 
 
 def _error(message: dict[str, object], extra: Mapping[str, object]) -> Ended:

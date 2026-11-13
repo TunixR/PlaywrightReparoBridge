@@ -42,7 +42,7 @@ from reparo_playwright_bridge._payload import (
     pass_suffix,
 )
 from reparo_playwright_bridge._process import Process, definition_of
-from reparo_playwright_bridge._protocol import ContinuationContent, Ended, recover
+from reparo_playwright_bridge._protocol import Ended, recover
 from reparo_playwright_bridge._report import report_result
 from reparo_playwright_bridge._result import Failure, LocalOutcome, RunResult
 from reparo_playwright_bridge._settings import ReparoSettings
@@ -133,10 +133,8 @@ class _Run:
                 exc_info=exc,
                 extra={"case_id": self.case_id},
             )
-            stop = RunResult(
-                outcome=self._local_outcome,
-                reason=f"{FailureKind.PROCESS_BUG.value}: {summary}",
-                failure=Failure(type=self._local_outcome),
+            stop = RunResult.failed(
+                self._local_outcome, f"{FailureKind.PROCESS_BUG.value}: {summary}"
             )
         if self._recovery_id is not None and stop.recovery_id is None:
             stop = stop.model_copy(update={"recovery_id": self._recovery_id})
@@ -256,10 +254,8 @@ class _Run:
             exc_info=exc,
             extra={"case_id": self.case_id, "loop_iteration": list(passes)},
         )
-        return RunResult(
-            outcome=self._local_outcome,
-            reason=f"{FailureKind.PROCESS_BUG.value}: {where}: {summary}",
-            failure=Failure(type=self._local_outcome),
+        return RunResult.failed(
+            self._local_outcome, f"{FailureKind.PROCESS_BUG.value}: {where}: {summary}"
         )
 
     async def _event(
@@ -312,6 +308,7 @@ class _Run:
     ) -> _Stop:
         classified = classify(exc)
         outcome = self._local_outcome
+        # Where the run failed; `RunResult.failed` gives it the type of the outcome it ends with.
         failure = Failure(type=outcome, event_id=event.id, loop_iteration=list(passes))
         if classified.kind is not FailureKind.UI:
             run_log.error(
@@ -322,7 +319,7 @@ class _Run:
                 exc_info=exc,
                 extra=extra,
             )
-            return RunResult(outcome=outcome, reason=classified.reason, failure=failure)
+            return RunResult.failed(outcome, classified.reason, failure=failure)
         failure.error_code = classified.error_code
         failure.error_description = classified.summary
         run_log.debug("Event %s failed: UI failure", name, exc_info=exc, extra=extra)
@@ -343,9 +340,9 @@ class _Run:
             why,
             extra=extra,
         )
-        return RunResult(
-            outcome=outcome,
-            reason=f"{classified.reason} (not handed to Reparo: {why})",
+        return RunResult.failed(
+            outcome,
+            f"{classified.reason} (not handed to Reparo: {why})",
             failure=failure,
         )
 
@@ -378,9 +375,11 @@ class _Run:
         )
         answer = await recover(self.settings, payload, extra)
         if isinstance(answer, Ended):
-            failure.type = answer.failure_type
-            return RunResult(
-                outcome=answer.outcome, reason=answer.reason, failure=failure
+            return RunResult.failed(
+                answer.outcome,
+                answer.reason,
+                failure=failure,
+                sub_cause=answer.failure_type,
             )
         recovery_log.info(
             "done received: Recovery %s, success %s",
@@ -389,21 +388,19 @@ class _Run:
             extra=extra,
         )
         content = answer.content
-        if isinstance(content, ContinuationContent) and not content.success:
-            failure.type = "recovery_failed"
-            return RunResult(
-                outcome="recovery_failed",
-                reason="Reparo could not recover the failure",
+        if not content.success:
+            return RunResult.failed(
+                "recovery_failed",
+                "Reparo could not recover the failure",
                 failure=failure,
                 recovery_id=answer.recovery_id,
             )
         resolved = resolve(self.definition, content, snapshot)
         match resolved:
             case Rejected():
-                failure.type = "continuation_rejected"
-                return RunResult(
-                    outcome="continuation_rejected",
-                    reason=resolved.reason,
+                return RunResult.failed(
+                    "continuation_rejected",
+                    resolved.reason,
                     failure=failure,
                     recovery_id=answer.recovery_id,
                 )
@@ -416,10 +413,9 @@ class _Run:
                     exc_info=exc,
                     extra=extra,
                 )
-                return RunResult(
-                    outcome="continuation_failed",
-                    reason=f"{classified.kind.value}: on_continuation crashed: {classified.summary}",
-                    failure=Failure(type="continuation_failed"),
+                return RunResult.failed(
+                    "continuation_failed",
+                    f"{classified.kind.value}: on_continuation crashed: {classified.summary}",
                     recovery_id=answer.recovery_id,
                 )
             case Resume():
@@ -428,7 +424,7 @@ class _Run:
         if resolved.event is None:
             where = "the Process is finished"
         else:
-            passes = tuple(cast("ContinuationContent", content).loop_iteration)
+            passes = tuple(content.loop_iteration)
             where = f"resuming at Event {resolved.event.id}{pass_suffix(passes)}"
         recovery_log.info(
             "Continuation: %s; %s",
@@ -465,10 +461,8 @@ async def run(
         run_log.error(
             "Run failed: Process bug (%s)", summary, exc_info=exc, extra=extra
         )
-        result = RunResult(
-            outcome="local",
-            reason=f"Process bug: {summary}",
-            failure=Failure(type="local"),
+        result = RunResult.failed(
+            "local", f"{FailureKind.PROCESS_BUG.value}: {summary}"
         )
     level = logging.INFO if result.outcome == "completed" else logging.ERROR
     run_log.log(level, "%s", result, extra=extra)
@@ -498,9 +492,7 @@ async def _run(
         )
         _check_inputs(definition, variables)
     except _LocalFailure as failure:
-        return RunResult(
-            outcome="local", reason=failure.reason, failure=Failure(type="local")
-        )
+        return RunResult.failed("local", failure.reason)
     result = await _Run(definition, context, reparo, resolved).walk(
         copy.deepcopy(dict(variables))
     )

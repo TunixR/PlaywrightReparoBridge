@@ -16,7 +16,7 @@ from reparo_playwright_bridge._definition import (
     SequenceNode,
     XorNode,
 )
-from reparo_playwright_bridge._protocol import ContinuationContent, LegacyContinuation
+from reparo_playwright_bridge._protocol import ContinuationContent
 
 _ANSWER = "Reparo's Continuation"
 """How a rejection reason names the answer it rejects."""
@@ -74,17 +74,13 @@ def _place(
 
 def resolve(
     definition: ProcessDefinition,
-    answer: ContinuationContent | LegacyContinuation,
+    answer: ContinuationContent,
     snapshot: Variables,
 ) -> Resume | Rejected | HookCrashed:
     """Validate a successful answer against the Process and decide the Variables it resumes with.
 
     `snapshot` is the failing Event's start snapshot.
     """
-    if isinstance(answer, LegacyContinuation):
-        return Rejected(
-            "Reparo answered with the legacy continue_from_step shape, which names no Event"
-        )
     event: EventNode | None = None
     if not answer.process_finished:
         located = _locate(definition, answer)

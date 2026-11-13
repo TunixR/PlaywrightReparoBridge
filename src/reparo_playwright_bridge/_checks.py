@@ -13,7 +13,7 @@ from reparo_playwright_bridge._classify import FailureKind, classify_outside_eve
 from reparo_playwright_bridge._context import CheckContext, Variables, active_page
 from reparo_playwright_bridge._definition import CompletionCheck
 from reparo_playwright_bridge._log import checks_log
-from reparo_playwright_bridge._result import Failure, LocalOutcome, RunResult
+from reparo_playwright_bridge._result import LocalOutcome, RunResult
 
 
 class _BadReturn(Exception):
@@ -100,8 +100,6 @@ def _crashed(
         exc_info=None if isinstance(exc, _BadReturn) else exc,
         extra=extra,
     )
-    return RunResult(
-        outcome=failed_outcome,
-        reason=f"{kind.value}: completion check {check.id} crashed: {summary}",
-        failure=Failure(type=failed_outcome),
+    return RunResult.failed(
+        failed_outcome, f"{kind.value}: completion check {check.id} crashed: {summary}"
     )

@@ -4,7 +4,6 @@
 
 import logging
 import socket
-import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
@@ -23,7 +22,6 @@ from reparo_playwright_bridge.testing import (
     Continue,
     FakeReparo,
     Report,
-    SendRaw,
     Step,
 )
 from tests.fixture_server import FixtureServer
@@ -244,28 +242,6 @@ async def test_an_answer_that_names_no_top_level_event_is_rejected(
     assert trail == ["open_page"]
     assert result.recovery_id is not None
     assert reparo.reports == [Report(result.recovery_id, {"success": False})]
-
-
-@pytest.mark.parametrize("success", [True, False])
-async def test_the_legacy_continue_from_step_answer_is_rejected(
-    context: BrowserContext, site: FixtureServer, success: bool
-) -> None:
-    _ = site.page("/page", PAGE)
-    trail: list[str] = []
-    recovery_id = str(uuid.uuid4())
-    legacy = {
-        "type": "done",
-        "id": recovery_id,
-        "content": {"success": success, "continue_from_step": 3},
-    }
-
-    result, _reparo = await recover(context, approval_process(trail), [SendRaw(legacy)])
-
-    assert result.outcome == "continuation_rejected"
-    assert result.reason is not None
-    assert "continue_from_step" in result.reason
-    assert result.recovery_id == recovery_id
-    assert trail == ["open_page"]
 
 
 def capturing_final_variables(
