@@ -15,8 +15,9 @@ from __future__ import annotations
 from examples.spending_approval.cases import BUDGET_REASON, LIMIT_REASON, Case, Row
 from reparo_playwright_bridge.testing import Act, Continue, Locate, Silence, Step
 
-_SETTLE = Silence(0.25)
-"""After a click that navigates, so the next target is located on the new page."""
+_PAUSE = Silence(1.0)
+"""After every Recovery action: the page settles (a click may navigate) before the next target
+is located, and a headed run can be followed by eye."""
 
 
 def recovery_script(case: Case) -> list[Step]:
@@ -30,26 +31,23 @@ def recovery_script(case: Case) -> list[Step]:
     return script
 
 
-def _click(selector: str, *, navigates: bool = False) -> list[Step]:
-    act: list[Step] = [Act("left_single", Locate(selector))]
-    return act + [_SETTLE] if navigates else act
+def _click(selector: str) -> list[Step]:
+    return [Act("left_single", Locate(selector)), _PAUSE]
 
 
 def _open(row: Row) -> list[Step]:
     """From a detail page, back to the list, then into `row`'s request."""
-    return _click('a:text-is("Back to requests")', navigates=True) + _click(
-        f'a[href="/requests/{row.request_id}"]', navigates=True
+    return _click('a:text-is("Back to requests")') + _click(
+        f'a[href="/requests/{row.request_id}"]'
     )
 
 
 def _decide(row: Row) -> list[Step]:
     if row.expected_decision == "approve":
-        return _click("#actions-button") + _click(
-            '[role=menuitem]:text-is("Approve")', navigates=True
-        )
+        return _click("#actions-button") + _click('[role=menuitem]:text-is("Approve")')
     reason = LIMIT_REASON if row.expected_decision == "reject_limit" else BUDGET_REASON
     return (
         _click("#reason-button")
         + _click(f'[role=option]:text-is("{reason}")')
-        + _click('button:text-is("Reject")', navigates=True)
+        + _click('button:text-is("Reject")')
     )
