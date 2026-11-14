@@ -10,154 +10,76 @@ captures the UI log fields; every other call is Playwright's, untouched.
 
 from __future__ import annotations
 
-import asyncio
 import functools
 import inspect
-from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
-from datetime import UTC, datetime
-from pathlib import PurePath
+from collections.abc import Awaitable, Callable
 from typing import Any, cast, override
-from urllib.parse import urlsplit
 
 from playwright.async_api import FrameLocator, Locator, Mouse, Page
 
 from reparo_playwright_bridge._classify import ProcessBug
-
-STATE_LIMIT = 200
-READ_TIMEOUT_MS = 500
-PREVIOUS_UNAVAILABLE = "[Previous state unavailable]"
-CURRENT_UNAVAILABLE = "[Current state unavailable]"
-NO_LONGER_ON_SCREEN = "[No longer on screen]"
-
-_SNAPSHOT_JS = """
-(el) => {
-  const text = (n) => (n.innerText ?? n.textContent ?? "").replace(/\\s+/g, " ").trim();
-  const name = (n) => {
-    const ids = n.getAttribute("aria-labelledby");
-    if (ids) {
-      const t = ids.split(/\\s+/).map((id) => document.getElementById(id))
-        .filter(Boolean).map(text).join(" ").trim();
-      if (t) return t;
-    }
-    const label = (n.getAttribute("aria-label") || "").trim();
-    if (label) return label;
-    if (n.labels && n.labels.length) {
-      const t = [...n.labels].map(text).join(" ").trim();
-      if (t) return t;
-    }
-    if (n.tagName === "FIELDSET") {
-      const legend = n.querySelector(":scope > legend");
-      if (legend && text(legend)) return text(legend);
-    }
-    for (const attr of ["alt", "title", "placeholder"]) {
-      const v = (n.getAttribute(attr) || "").trim();
-      if (v) return v;
-    }
-    return "";
-  };
-  const IMPLICIT = {DIALOG: "dialog", FORM: "form", SECTION: "region", TR: "row",
-                    LI: "listitem", FIELDSET: "group", DETAILS: "group"};
-  const CONTAINERS = ["dialog", "menu", "form", "region", "row", "listitem", "group", "toolbar"];
-  let group = "root";
-  for (let n = el.parentElement; n; n = n.parentElement) {
-    const role = n.getAttribute("role") || IMPLICIT[n.tagName];
-    if (CONTAINERS.includes(role) && name(n)) { group = name(n); break; }
-  }
-  const scrollable = (n) => {
-    const style = getComputedStyle(n);
-    return /(auto|scroll)/.test(style.overflowY + style.overflowX)
-      && (n.scrollHeight > n.clientHeight || n.scrollWidth > n.clientWidth);
-  };
-  let scroller = null;
-  for (let n = el.parentElement; n && n !== document.body && n !== document.documentElement;
-       n = n.parentElement) {
-    if (scrollable(n)) { scroller = n; break; }
-  }
-  const toggle = el.tagName === "INPUT" && ["checkbox", "radio"].includes(el.type);
-  const field = ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName);
-  const button = el.tagName === "INPUT" && ["button", "submit", "reset"].includes(el.type);
-  return {
-    target: name(el) || (button ? el.value : field ? "" : text(el)),
-    group,
-    state: toggle ? String(el.checked) : field ? el.value : text(el),
-    scroller: scroller ? (name(scroller) || text(scroller).slice(0, 80) || scroller.tagName.toLowerCase()) : null,
-    scroll: scroller ? [scroller.scrollLeft, scroller.scrollTop] : [window.scrollX, window.scrollY],
-    selected: el.tagName === "SELECT" ? [...el.selectedOptions].map((o) => o.label).join(", ") : null,
-  };
-}
-"""
-_PAGE_SCROLL_JS = "() => [window.scrollX, window.scrollY]"
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def _cut(state: str) -> str:
-    return state[:STATE_LIMIT]
-
-
-@dataclass(frozen=True)
-class LoggedCall:
-    """The UI log fields of one logged call, as Playwright saw them (unmasked)."""
-
-    action_type: str
-    input: str | None
-    target: str | None
-    group: str | None
-    previous_state: str
-    current_state: str
-    timestamp: str
-
-
-@dataclass(frozen=True)
-class _Snapshot:
-    target: str
-    group: str
-    state: str
-    scroller: str | None
-    scroll: tuple[int, int]
-    selected: str | None
+from reparo_playwright_bridge._logged_calls import (
+    ACTIONS,
+    NO_ATTEMPT,
+    PAGE_SHORTCUTS,
+    READ,
+    READS,
+    SCROLL_INTO_VIEW,
+    Attempt,
+    LoggedCall,
+    timestamp,
+)
+from reparo_playwright_bridge._state_reads import (
+    CURRENT_UNAVAILABLE,
+    NO_LONGER_ON_SCREEN,
+    PREVIOUS_UNAVAILABLE,
+    application,
+    cut,
+    gone,
+    page_scroll,
+    read_snapshot,
+    read_state,
+    scroll_delta,
+    scroll_text,
+    selector_of,
+)
 
 
 class Recorder:
     """What one Event did through `ctx.page`: its action, its last read, and what it attempted."""
 
-    def __init__(self, event: str, application: str | None) -> None:
-        self.event: str = event
-        """The Event as log lines name it, for the Process bugs it raises."""
-        self.application: str | None = application
-        """The page title at Event start, else the URL host."""
+    def __init__(self, event_label: str) -> None:
+        self.event_label: str = event_label
+        """The Event as log lines name it (`click_approve #0`), for the Process bugs it raises."""
+        self.application: str | None = None
+        """The page title at Event start, else the URL host; set by `open`."""
         self._action: LoggedCall | None = None
         self._read: LoggedCall | None = None
-        self._attempted_action: tuple[str, str | None] | None = None
+        self._attempted_action: Attempt | None = None
         self._attempted_read: bool = False
         self._broken: ProcessBug | None = None
 
-    @classmethod
-    async def start(cls, event: str, page: Page) -> Recorder:
-        return cls(event, await _application(page))
+    async def open(self, page: Page) -> RecordingPage:
+        """`page` as the Event's `ctx.page`; reads the application the Event starts on."""
+        self.application = await application(page)
+        return RecordingPage(page, self)
 
     @property
-    def attempted(self) -> tuple[str, str | None] | None:
-        """The `action_type` and `input` of the call the Event attempted, or None for none.
-
-        The Event's action wins over its reads, recorded when it started.
-        """
+    def attempted(self) -> Attempt:
+        """The Event's action if it attempted one, else a read if it attempted one."""
         if self._attempted_action is not None:
             return self._attempted_action
-        return ("read", None) if self._attempted_read else None
+        return READ if self._attempted_read else NO_ATTEMPT
 
-    def begin_action(self, method: str, action_type: str, input: str | None) -> None:
+    def begin_action(self, method: str, attempt: Attempt) -> None:
         """Called before an action runs: a second action is a Process bug, raised instead."""
         if self._attempted_action is not None:
             self._broken = ProcessBug(
-                f"Event {self.event} performed a second action ({method}) after its"
-                + f" {self._attempted_action[0]}; an Event performs exactly one action"
+                f"Event {self.event_label} performed a second action ({method}) after its"
+                + f" {self._attempted_action.action_type}; an Event performs exactly one action"
             )
             raise self._broken
-        self._attempted_action = (action_type, input)
+        self._attempted_action = attempt
 
     def begin_read(self) -> None:
         self._attempted_read = True
@@ -169,186 +91,16 @@ class Recorder:
         self._read = call
 
     def finish(self) -> LoggedCall:
-        """The Event's one entry: its action, else its last read. No logged call is a Process bug."""
+        """The Event's logged call: its action, else its last read. None at all is a Process bug."""
         if self._broken is not None:
             raise self._broken
-        entry = self._action or self._read
-        if entry is None:
+        call = self._action or self._read
+        if call is None:
             raise ProcessBug(
-                f"Event {self.event} performed no logged call; an Event performs one action"
-                + " or at least one read"
+                f"Event {self.event_label} performed no logged call; an Event performs one"
+                + " action or at least one read"
             )
-        return entry
-
-
-async def _within_timeout[T](awaitable: Awaitable[T]) -> T | None:
-    """`awaitable`'s value, or None if it fails or takes longer than the state-read timeout."""
-    try:
-        return await asyncio.wait_for(awaitable, READ_TIMEOUT_MS / 1000)
-    except Exception:  # noqa: BLE001  # a state read never fails the Event
-        return None
-
-
-async def _application(page: Page) -> str | None:
-    title = await _within_timeout(page.title())
-    if title and title.strip():
-        return title.strip()
-    return urlsplit(page.url).hostname or None
-
-
-async def _snapshot(locator: Locator) -> _Snapshot | None:
-    try:
-        raw = await locator.evaluate(_SNAPSHOT_JS, timeout=READ_TIMEOUT_MS)
-    except Exception:  # noqa: BLE001  # a state read never fails the Event
-        return None
-    values = cast("dict[str, Any]", raw)
-    scroll = cast("list[int]", values["scroll"])
-    return _Snapshot(
-        target=str(values["target"]),
-        group=str(values["group"]),
-        state=str(values["state"]),
-        scroller=values["scroller"],
-        scroll=(int(scroll[0]), int(scroll[1])),
-        selected=values["selected"],
-    )
-
-
-async def _gone(locator: Locator) -> bool:
-    """Whether the element is confirmed gone; False when that can't be told in time."""
-    return await _within_timeout(locator.count()) == 0
-
-
-def _selector(locator: Locator) -> str:
-    impl = cast("object", locator._impl_obj)  # pyright: ignore[reportPrivateUsage]
-    selector = getattr(impl, "_selector", None)
-    return selector if isinstance(selector, str) else repr(locator)
-
-
-def _read_state(value: object) -> str:
-    """What a read returned, as a state: a list joined, a missing text empty."""
-    if isinstance(value, list):
-        return ", ".join(str(v) for v in cast("list[object]", value))
-    return "" if value is None else str(value)
-
-
-def _scroll_text(scroll: tuple[int, int]) -> str:
-    return f"{scroll[0]},{scroll[1]}"
-
-
-# ------------------------------------------------------------------------------- what each call logs
-
-
-def _file_name(file: object) -> str:
-    if isinstance(file, Mapping):
-        return str(cast("Mapping[str, object]", file).get("name", ""))
-    return PurePath(str(file)).name
-
-
-def _files(files: object) -> str:
-    items = cast("list[object]", files) if isinstance(files, list | tuple) else [files]
-    return ", ".join(_file_name(f) for f in items)
-
-
-def _options(args: Mapping[str, Any]) -> str | None:
-    for key in ("label", "value", "index"):
-        value = args.get(key)
-        if value is not None:
-            items = (
-                cast("list[object]", value)
-                if isinstance(value, list | tuple)
-                else [value]
-            )
-            return ", ".join(str(item) for item in items)
-    return None
-
-
-Inputs = Callable[[Mapping[str, Any]], tuple[str, str | None]]
-"""From a call's bound arguments: its `action_type` and its `input`."""
-
-_ACTIONS: dict[str, Inputs] = {
-    "click": lambda _: ("click", None),
-    "dblclick": lambda _: ("double_click", None),
-    "fill": lambda a: ("type", str(a["value"])),
-    "type": lambda a: ("type", str(a["text"])),
-    "press_sequentially": lambda a: ("type", str(a["text"])),
-    "press": lambda a: ("press", str(a["key"])),
-    "select_option": lambda a: ("select", _options(a)),
-    "check": lambda _: ("check", "true"),
-    "uncheck": lambda _: ("uncheck", "false"),
-    "set_checked": lambda a: (
-        ("check", "true") if a["checked"] else ("uncheck", "false")
-    ),
-    "hover": lambda _: ("hover", None),
-    "drag_to": lambda _: ("drag", None),
-    "set_input_files": lambda a: ("upload", _files(a["files"])),
-    "scroll_into_view_if_needed": lambda _: ("scroll", None),
-}
-_READS = (
-    "inner_text",
-    "text_content",
-    "input_value",
-    "get_attribute",
-    "all_inner_texts",
-    "all_text_contents",
-)
-_LOCATOR_CHAINS = (
-    "locator",
-    "get_by_alt_text",
-    "get_by_label",
-    "get_by_placeholder",
-    "get_by_role",
-    "get_by_test_id",
-    "get_by_text",
-    "get_by_title",
-    "filter",
-    "and_",
-    "or_",
-    "nth",
-    "frame_locator",
-)
-_LOCATOR_CHAIN_PROPERTIES = ("first", "last", "content_frame")
-_FRAME_CHAINS = (
-    "locator",
-    "get_by_alt_text",
-    "get_by_label",
-    "get_by_placeholder",
-    "get_by_role",
-    "get_by_test_id",
-    "get_by_text",
-    "get_by_title",
-    "frame_locator",
-    "nth",
-)
-_FRAME_CHAIN_PROPERTIES = ("first", "last", "owner")
-_PAGE_CHAINS = (
-    "locator",
-    "get_by_alt_text",
-    "get_by_label",
-    "get_by_placeholder",
-    "get_by_role",
-    "get_by_test_id",
-    "get_by_text",
-    "get_by_title",
-    "frame_locator",
-)
-_PAGE_SHORTCUTS = (
-    "click",
-    "dblclick",
-    "fill",
-    "type",
-    "press",
-    "select_option",
-    "check",
-    "uncheck",
-    "set_checked",
-    "hover",
-    "set_input_files",
-    "inner_text",
-    "text_content",
-    "input_value",
-    "get_attribute",
-)
-"""Page methods that take a selector first and do what the Locator method of the same name does."""
+        return call
 
 
 def _wrap(recorder: Recorder, value: object) -> object:
@@ -370,75 +122,89 @@ class RecordingLocator(Locator):
         self, method: str, args: tuple[Any, ...], kwargs: dict[str, Any]
     ) -> Any:
         base = getattr(Locator, method)
-        bound = inspect.signature(base).bind(self, *args, **kwargs).arguments
-        action_type, input = _ACTIONS[method](bound)
-        self._recorder.begin_action(method, action_type, input)
-        before = await _snapshot(self)
+        attempt = ACTIONS[method](
+            inspect.signature(base).bind(self, *args, **kwargs).arguments
+        )
+        self._recorder.begin_action(method, attempt)
+        before = await read_snapshot(self)
         result = await base(self, *args, **kwargs)
-        after = await _snapshot(self)
+        after = await read_snapshot(self)
         known = before or after
-        target = known.target if known and known.target else _selector(self)
-        group = known.group if known else "root"
-        if action_type == "scroll":
-            before_scroll = before.scroll if before else None
-            after_scroll = after.scroll if after else None
-            if before_scroll and after_scroll:
-                delta = (
-                    after_scroll[0] - before_scroll[0],
-                    after_scroll[1] - before_scroll[1],
-                )
-                input = _scroll_text(delta)
-            target = known.scroller if known else None
-            previous = (
-                _scroll_text(before_scroll) if before_scroll else PREVIOUS_UNAVAILABLE
-            )
-            current = (
-                _scroll_text(after_scroll) if after_scroll else CURRENT_UNAVAILABLE
-            )
+        input = attempt.input
+        if attempt.action_type == "select" and after and after.selected is not None:
+            input = after.selected  # the labels chosen, however the options were named
+        if after:
+            current = after.state
+        elif await gone(self):
+            current = NO_LONGER_ON_SCREEN
         else:
-            if action_type == "select" and after and after.selected is not None:
-                input = after.selected
-            previous = before.state if before else PREVIOUS_UNAVAILABLE
-            if after:
-                current = after.state
-            else:
-                current = (
-                    NO_LONGER_ON_SCREEN if await _gone(self) else CURRENT_UNAVAILABLE
-                )
+            current = CURRENT_UNAVAILABLE
         self._recorder.action(
             LoggedCall(
-                action_type, input, target, group, _cut(previous), _cut(current), _now()
+                attempt.action_type,
+                input,
+                known.target if known and known.target else selector_of(self),
+                known.group if known else "root",
+                cut(before.state if before else PREVIOUS_UNAVAILABLE),
+                cut(current),
+                timestamp(),
             )
         )
         return result
 
-    async def _read(
+    async def _scroll(
+        self, method: str, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> None:
+        """A scroll's target is the element's scrollable ancestor; its states, that offset."""
+        self._recorder.begin_action(method, Attempt("scroll", None))
+        before = await read_snapshot(self)
+        await Locator.scroll_into_view_if_needed(self, *args, **kwargs)
+        after = await read_snapshot(self)
+        known = before or after
+        delta = (
+            scroll_text(scroll_delta(before.scroll, after.scroll))
+            if before and after
+            else None
+        )
+        self._recorder.action(
+            LoggedCall(
+                "scroll",
+                delta,
+                known.scroller if known else None,
+                known.group if known else "root",
+                scroll_text(before.scroll) if before else PREVIOUS_UNAVAILABLE,
+                scroll_text(after.scroll) if after else CURRENT_UNAVAILABLE,
+                timestamp(),
+            )
+        )
+
+    async def _read_call(
         self, method: str, args: tuple[Any, ...], kwargs: dict[str, Any]
     ) -> Any:
         self._recorder.begin_read()
         value: object = await getattr(Locator, method)(self, *args, **kwargs)
-        snapshot = await _snapshot(
-            self if not method.startswith("all_") else self.first
+        snapshot = await read_snapshot(
+            self.first if method.startswith("all_") else self
         )
-        target = snapshot.target if snapshot and snapshot.target else _selector(self)
-        state = _cut(_read_state(value))
+        state = cut(read_state(value))
         self._recorder.read(
             LoggedCall(
                 "read",
                 None,
-                target,
+                snapshot.target if snapshot and snapshot.target else selector_of(self),
                 snapshot.group if snapshot else "root",
                 state,
                 state,
-                _now(),
+                timestamp(),
             )
         )
         return value
 
-
-async def _all(self: RecordingLocator) -> list[Locator]:
-    locators = await Locator.all(self)
-    return [RecordingLocator(locator, self._recorder) for locator in locators]  # pyright: ignore[reportPrivateUsage]
+    async def _all(self) -> list[Locator]:
+        return [
+            RecordingLocator(locator, self._recorder)
+            for locator in await Locator.all(self)
+        ]
 
 
 class RecordingFrameLocator(FrameLocator):
@@ -460,19 +226,19 @@ class RecordingMouse(Mouse):
     @override
     async def wheel(self, delta_x: float, delta_y: float) -> None:
         delta = f"{delta_x:g},{delta_y:g}"
-        self._recorder.begin_action("mouse.wheel", "scroll", delta)
-        before = await _within_timeout(self._page.evaluate(_PAGE_SCROLL_JS))
+        self._recorder.begin_action("mouse.wheel", Attempt("scroll", delta))
+        before = await page_scroll(self._page)
         await super().wheel(delta_x, delta_y)
-        after = await _within_timeout(self._page.evaluate(_PAGE_SCROLL_JS))
+        after = await page_scroll(self._page)
         self._recorder.action(
             LoggedCall(
                 "scroll",
                 delta,
                 None,
                 "root",
-                _scroll_text(tuple(before)) if before else PREVIOUS_UNAVAILABLE,
-                _scroll_text(tuple(after)) if after else CURRENT_UNAVAILABLE,
-                _now(),
+                scroll_text(before) if before else PREVIOUS_UNAVAILABLE,
+                scroll_text(after) if after else CURRENT_UNAVAILABLE,
+                timestamp(),
             )
         )
 
@@ -491,53 +257,68 @@ class RecordingPage(Page):
 
     @override
     async def goto(self, url: str, **kwargs: Any) -> Any:
-        self._recorder.begin_action("goto", "navigate", None)
+        self._recorder.begin_action("goto", Attempt("navigate", None))
         previous = self.url
         response = await super().goto(url, **kwargs)
         current = self.url
         self._recorder.action(
             LoggedCall(
-                "navigate", None, current, "root", _cut(previous), _cut(current), _now()
+                "navigate",
+                None,
+                current,
+                "root",
+                cut(previous),
+                cut(current),
+                timestamp(),
             )
         )
         return response
 
-    def _shortcut(
-        self, method: str, selector: str, args: tuple[Any, ...], kwargs: dict[str, Any]
-    ) -> Awaitable[Any]:
-        strict = kwargs.pop("strict", None)
+    def _selected(self, selector: str, strict: bool | None) -> Locator:
+        """What a selector shortcut acts on: without `strict`, Playwright takes the first match."""
         locator = self.locator(selector)
-        if not strict:
-            locator = locator.first
-        return getattr(locator, method)(*args, **kwargs)
+        return locator if strict else locator.first
+
+    def _shortcut(
+        self, method: str, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> Awaitable[Any]:
+        rest = list(args)
+        selector = rest.pop(0) if rest else kwargs.pop("selector")
+        locator = self._selected(selector, kwargs.pop("strict", None))
+        return getattr(locator, method)(*rest, **kwargs)
 
     @override
     async def drag_and_drop(self, source: str, target: str, **kwargs: Any) -> None:
         strict = kwargs.pop("strict", None)
-        source_locator, target_locator = self.locator(source), self.locator(target)
-        if not strict:
-            source_locator, target_locator = source_locator.first, target_locator.first
-        await source_locator.drag_to(target_locator, **kwargs)
+        await self._selected(source, strict).drag_to(
+            self._selected(target, strict), **kwargs
+        )
 
 
 # Install the recorded calls and the chains that keep later Locators recording. They are set
 # after the classes so each keeps the signature and docs of the Playwright method it covers.
 
+_GET_BY = (
+    "get_by_alt_text",
+    "get_by_label",
+    "get_by_placeholder",
+    "get_by_role",
+    "get_by_test_id",
+    "get_by_text",
+    "get_by_title",
+)
+_MAKES_LOCATORS = ("locator", "frame_locator", *_GET_BY)
+"""Methods that Page, Locator and FrameLocator share, each returning a Locator or FrameLocator."""
 
-def _install_action(method: str) -> None:
-    @functools.wraps(getattr(Locator, method))
-    def call(self: RecordingLocator, *args: Any, **kwargs: Any) -> Awaitable[Any]:
-        return self._act(method, args, kwargs)  # pyright: ignore[reportPrivateUsage]
 
-    setattr(RecordingLocator, method, call)
+def _install(cls: type[Any], base: type[Any], method: str, handler: str) -> None:
+    """`cls.method` hands its call to `self.<handler>(method, args, kwargs)`."""
 
+    @functools.wraps(getattr(base, method))
+    def call(self: Any, *args: Any, **kwargs: Any) -> Awaitable[Any]:
+        return getattr(self, handler)(method, args, kwargs)
 
-def _install_read(method: str) -> None:
-    @functools.wraps(getattr(Locator, method))
-    def call(self: RecordingLocator, *args: Any, **kwargs: Any) -> Awaitable[Any]:
-        return self._read(method, args, kwargs)  # pyright: ignore[reportPrivateUsage]
-
-    setattr(RecordingLocator, method, call)
+    setattr(cls, method, call)
 
 
 def _install_chain(cls: type[Any], base: type[Any], method: str) -> None:
@@ -551,35 +332,26 @@ def _install_chain(cls: type[Any], base: type[Any], method: str) -> None:
 
 
 def _install_chain_property(cls: type[Any], base: type[Any], name: str) -> None:
-    original = cast("property", getattr(base, name))
-    getter = cast("Callable[[Any], object]", original.fget)
+    getter = cast("Callable[[Any], object]", cast("property", getattr(base, name)).fget)
     setattr(cls, name, property(lambda self: _wrap(self._recorder, getter(self))))
 
 
-def _install_shortcut(method: str) -> None:
-    @functools.wraps(getattr(Page, method))
-    def call(
-        self: RecordingPage, selector: str, *args: Any, **kwargs: Any
-    ) -> Awaitable[Any]:
-        return self._shortcut(method, selector, args, kwargs)  # pyright: ignore[reportPrivateUsage]
+for _method in ACTIONS:
+    _install(RecordingLocator, Locator, _method, "_act")
+_install(RecordingLocator, Locator, SCROLL_INTO_VIEW, "_scroll")
+for _method in READS:
+    _install(RecordingLocator, Locator, _method, "_read_call")
+for _method in PAGE_SHORTCUTS:
+    _install(RecordingPage, Page, _method, "_shortcut")
+RecordingLocator.all = functools.wraps(Locator.all)(RecordingLocator._all)  # pyright: ignore[reportPrivateUsage]
 
-    setattr(RecordingPage, method, call)
-
-
-RecordingLocator.all = functools.wraps(Locator.all)(_all)
-for _method in _ACTIONS:
-    _install_action(_method)
-for _method in _READS:
-    _install_read(_method)
-for _method in _LOCATOR_CHAINS:
+for _method in (*_MAKES_LOCATORS, "filter", "and_", "or_", "nth"):
     _install_chain(RecordingLocator, Locator, _method)
-for _name in _LOCATOR_CHAIN_PROPERTIES:
-    _install_chain_property(RecordingLocator, Locator, _name)
-for _method in _FRAME_CHAINS:
+for _method in (*_MAKES_LOCATORS, "nth"):
     _install_chain(RecordingFrameLocator, FrameLocator, _method)
-for _name in _FRAME_CHAIN_PROPERTIES:
-    _install_chain_property(RecordingFrameLocator, FrameLocator, _name)
-for _method in _PAGE_CHAINS:
+for _method in _MAKES_LOCATORS:
     _install_chain(RecordingPage, Page, _method)
-for _method in _PAGE_SHORTCUTS:
-    _install_shortcut(_method)
+for _name in ("first", "last", "content_frame"):
+    _install_chain_property(RecordingLocator, Locator, _name)
+for _name in ("first", "last", "owner"):
+    _install_chain_property(RecordingFrameLocator, FrameLocator, _name)

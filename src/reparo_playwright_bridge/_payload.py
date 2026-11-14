@@ -7,15 +7,13 @@ from dataclasses import dataclass
 
 from reparo_playwright_bridge._context import Variables
 from reparo_playwright_bridge._definition import EventNode, ProcessDefinition
+from reparo_playwright_bridge._logged_calls import Attempt, LoggedCall
 from reparo_playwright_bridge._model_export import render
-from reparo_playwright_bridge._recording import LoggedCall
 from reparo_playwright_bridge._settings import ReparoSettings
 
 type JsonObject = dict[str, object]
 
 PLATFORM = "playwright"
-NO_CALL_ATTEMPTED = "check"
-"""The Errored activity's `action_type` when the Event attempted no logged call."""
 MASK = "***"
 """A secret Event's `input` and states, wherever Reparo could see them."""
 
@@ -40,16 +38,33 @@ class LoggedEvent:
     application: str | None
     call: LoggedCall
 
+    def describe(self) -> str:
+        """This Logged event for the DEBUG log: typed text as its length only, secrets masked."""
+        call = self.call
+        parts = [call.action_type]
+        if call.target is not None:
+            parts.append(f"on {call.target!r}")
+        if call.group is not None:
+            parts.append(f"in {call.group!r}")
+        if call.input is not None:
+            if self.event.secret:
+                parts.append(f"input {MASK}")
+            elif call.action_type == "type":
+                parts.append(f"typed {len(call.input)} characters")
+            else:
+                parts.append(f"input {call.input!r}")
+        return f"{event_name(self.event, self.passes)} ({' '.join(parts)})"
+
 
 @dataclass(frozen=True)
 class ErroredActivity:
-    """The failing Event, with the call it attempted (`None` when it attempted none)."""
+    """The failing Event, with the call it attempted."""
 
     number: int
     event: EventNode
     passes: tuple[int, ...]
     application: str | None
-    attempted: tuple[str, str | None] | None
+    attempted: Attempt
     error_code: str
     error_description: str
 
@@ -110,12 +125,11 @@ def build_payload(
         }
         for logged in ui_log
     ]
-    action_type, input = errored.attempted or (NO_CALL_ATTEMPTED, None)
     errored_act: JsonObject = {
         **_common(case_id, errored.number, errored.event, errored.passes),
-        "action_type": action_type,
+        "action_type": errored.attempted.action_type,
         "application": errored.application,
-        "input": _masked(errored.event, input),
+        "input": _masked(errored.event, errored.attempted.input),
         "error_code": errored.error_code,
         "error_description": errored.error_description,
     }

@@ -6,6 +6,7 @@ import copy
 import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
 
@@ -38,16 +39,14 @@ from reparo_playwright_bridge._definition import (
 from reparo_playwright_bridge._log import recovery_log, run_log
 from reparo_playwright_bridge._modality import Modality
 from reparo_playwright_bridge._payload import (
-    MASK,
     ErroredActivity,
     LoggedEvent,
     build_payload,
-    event_name,
     pass_suffix,
 )
 from reparo_playwright_bridge._process import Process, definition_of
 from reparo_playwright_bridge._protocol import Ended, recover
-from reparo_playwright_bridge._recording import LoggedCall, Recorder, RecordingPage
+from reparo_playwright_bridge._recording import Recorder
 from reparo_playwright_bridge._recovery import RecoveryHandler
 from reparo_playwright_bridge._report import report_result
 from reparo_playwright_bridge._result import Failure, LocalOutcome, RunResult
@@ -62,21 +61,22 @@ _Stop = RunResult | Resume
 """Why a walk stopped early: the run ended, or Reparo's Continuation moved it elsewhere."""
 
 
-def _describe(event: EventNode, call: LoggedCall) -> str:
-    """A Logged event for the DEBUG log: typed text as its length only, a secret input masked."""
-    parts = [call.action_type]
-    if call.target is not None:
-        parts.append(f"on {call.target!r}")
-    if call.group is not None:
-        parts.append(f"in {call.group!r}")
-    if call.input is not None:
-        if event.secret:
-            parts.append(f"input {MASK}")
-        elif call.action_type == "type":
-            parts.append(f"typed {len(call.input)} characters")
-        else:
-            parts.append(f"input {call.input!r}")
-    return " ".join(parts)
+@dataclass(frozen=True)
+class _EventRun:
+    """One Event as it runs: what its failure path and its Recovery need."""
+
+    event: EventNode
+    passes: Passes
+    extra: dict[str, object]
+    """The log line extras: case, Event id, pass list, Activity."""
+    snapshot: Variables
+    """The Variables as the Event started."""
+    recorder: Recorder
+
+    @property
+    def name(self) -> str:
+        """The Event as log lines name it: `click_approve #0`."""
+        return self.event.id + pass_suffix(self.passes)
 
 
 class _LocalFailure(Exception):
@@ -366,29 +366,23 @@ class _Run:
                 extra=extra,
             )
         name = event.id + pass_suffix(passes)
+        running = _EventRun(
+            event, passes, extra, copy.deepcopy(variables), Recorder(name)
+        )
         run_log.debug("Event %s started", name, extra=extra)
         started = time.monotonic()
-        snapshot = copy.deepcopy(variables)
-        recorder: Recorder | None = None
         try:
-            page = await active_page(self.context)
-            recorder = await Recorder.start(name, page)
-            await event.fn(EventContext(RecordingPage(page, recorder), variables))
-            call = recorder.finish()
+            page = await running.recorder.open(await active_page(self.context))
+            await event.fn(EventContext(page, variables))
+            call = running.recorder.finish()
         except Exception as exc:  # noqa: BLE001  # every raise is classified, never re-raised
-            return await self._event_failed(
-                event, name, passes, exc, extra, snapshot, recorder
-            )
+            return await self._event_failed(running, exc)
         logged = LoggedEvent(
-            self._next_number(), event, passes, recorder.application, call
+            self._next_number(), event, passes, running.recorder.application, call
         )
         self._ui_log.append(logged)
         run_log.debug(
-            "Logged event %d: %s (%s)",
-            logged.number,
-            event_name(event, passes),
-            _describe(event, call),
-            extra=extra,
+            "Logged event %d: %s", logged.number, logged.describe(), extra=extra
         )
         run_log.debug(
             "Event %s ended in %.0f ms",
@@ -398,20 +392,14 @@ class _Run:
         )
         return None
 
-    async def _event_failed(
-        self,
-        event: EventNode,
-        name: str,
-        passes: Passes,
-        exc: Exception,
-        extra: dict[str, object],
-        snapshot: Variables,
-        recorder: Recorder | None,
-    ) -> _Stop:
+    async def _event_failed(self, running: _EventRun, exc: Exception) -> _Stop:
+        event, name, extra = running.event, running.name, running.extra
         classified = classify(exc)
         outcome = self._local_outcome
         # Where the run failed; `RunResult.failed` gives it the type of the outcome it ends with.
-        failure = Failure(type=outcome, event_id=event.id, loop_iteration=list(passes))
+        failure = Failure(
+            type=outcome, event_id=event.id, loop_iteration=list(running.passes)
+        )
         if classified.kind is not FailureKind.UI:
             run_log.error(
                 "Event %s failed: %s (%s)",
@@ -433,9 +421,7 @@ class _Run:
         elif not event.recoverable:
             why = f"Event {event.id} is not recoverable"
         else:
-            return await self._recover(
-                event, name, passes, failure, extra, snapshot, recorder
-            )
+            return await self._recover(running, failure)
         run_log.warning(
             "Event %s failed: UI failure (%s: %s); not handed to Reparo: %s",
             name,
@@ -450,17 +436,9 @@ class _Run:
             failure=failure,
         )
 
-    async def _recover(
-        self,
-        event: EventNode,
-        name: str,
-        passes: Passes,
-        failure: Failure,
-        extra: dict[str, object],
-        snapshot: Variables,
-        recorder: Recorder | None,
-    ) -> _Stop:
+    async def _recover(self, running: _EventRun, failure: Failure) -> _Stop:
         """Hand the UI failure to Reparo as the run's one Recovery."""
+        name, extra, snapshot = running.name, running.extra, running.snapshot
         code, description = failure.error_code or "", failure.error_description or ""
         recovery_log.info(
             "Recovery started: Event %s failed (%s: %s)",
@@ -471,10 +449,10 @@ class _Run:
         )
         errored = ErroredActivity(
             self._next_number(),
-            event,
-            passes,
-            recorder.application if recorder else None,
-            recorder.attempted if recorder else None,
+            running.event,
+            running.passes,
+            running.recorder.application,
+            running.recorder.attempted,
             code,
             description,
         )
