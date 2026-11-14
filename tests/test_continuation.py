@@ -139,11 +139,13 @@ async def test_the_resumed_event_is_a_new_logged_event_with_the_next_number(
         for r in caplog.records
         if r.getMessage().startswith("Logged event ")
     ]
-    assert logged == [
-        "Logged event 1: Open the page",
-        "Logged event 3: Click Approve",
-        "Logged event 4: Read the status",
+    expected = [
+        "Logged event 1: Open the page (",
+        "Logged event 3: Click Approve (",
+        "Logged event 4: Read the status (",
     ]
+    assert len(logged) == len(expected)
+    assert all(m.startswith(e) for m, e in zip(logged, expected, strict=True))
 
 
 def with_status_check(process: Process, expected: str) -> Process:
@@ -517,6 +519,7 @@ def nested_loop_process(trail: list[str], *, fail_at: str = "b1") -> Process:
             if line == fail_at and not failed:
                 failed.append(None)
                 ctx.fail("The line is locked.", code="LineLocked")
+            _ = await ctx.page.locator("body").inner_text()
             trail.append(line)
 
     return p
@@ -624,12 +627,14 @@ def routing_process(trail: list[str]) -> Process:
             if not failed:
                 failed.append(None)
                 ctx.fail("The Review button is missing.", code="ReviewMissing")
+            _ = await ctx.page.locator("body").inner_text()
             trail.append("review_large")
 
     with p.else_(), p.activity("Approve the request"):
 
         @p.event("Approve the request")
-        async def approve_small(_ctx: EventContext) -> None:
+        async def approve_small(ctx: EventContext) -> None:
+            _ = await ctx.page.locator("body").inner_text()
             trail.append("approve_small")
 
     return p
@@ -714,6 +719,7 @@ def loop_xor_loop_process(trail: list[str]) -> Process:
 
             @p.event("Note the order")
             async def note_order(ctx: EventContext) -> None:
+                _ = await ctx.page.locator("body").inner_text()
                 trail.append(f"note {ctx.vars['order'][0][0]}")
 
         with p.if_("size", lambda v: len(v["order"]) > 2, label="big order"):
@@ -721,6 +727,7 @@ def loop_xor_loop_process(trail: list[str]) -> Process:
 
                 @p.event("Flag the order")
                 async def flag_order(ctx: EventContext) -> None:
+                    _ = await ctx.page.locator("body").inner_text()
                     trail.append(f"flag {ctx.vars['order'][0][0]}")
 
             with (
@@ -734,12 +741,14 @@ def loop_xor_loop_process(trail: list[str]) -> Process:
                     if line == "b1" and not failed:
                         failed.append(None)
                         ctx.fail("The line is locked.", code="LineLocked")
+                    _ = await ctx.page.locator("body").inner_text()
                     trail.append(line)
 
         with p.else_(), p.activity("Pass the order"):
 
             @p.event("Pass the order")
             async def pass_order(ctx: EventContext) -> None:
+                _ = await ctx.page.locator("body").inner_text()
                 trail.append(f"pass {ctx.vars['order'][0][0]}")
 
     return p

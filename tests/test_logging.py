@@ -27,9 +27,10 @@ def one_event(body_raises: bool) -> Process:
     with p.activity("Do it"):
 
         @p.event("Do the thing")
-        async def do_it(_ctx: EventContext) -> None:
+        async def do_it(ctx: EventContext) -> None:
             if body_raises:
                 raise RuntimeError("boom")
+            _ = await ctx.page.locator("body").inner_text()
 
     return p
 
