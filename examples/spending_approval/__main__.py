@@ -54,6 +54,12 @@ def _parser() -> argparse.ArgumentParser:
         help="the real Reparo's base URL (real mode only; the robot key comes from"
         + " REPARO_ROBOT_KEY)",
     )
+    _ = parser.add_argument(
+        "--eval-agent-id",
+        metavar="UUID",
+        help="evaluate this GUI agent on Reparo's eval endpoint instead of recovering"
+        + " (real mode only)",
+    )
     return parser
 
 
@@ -61,12 +67,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     reparo: ReparoSettings | None = None
+    eval_agent_id = cast("str | None", args.eval_agent_id)
+    if eval_agent_id and cast("str", args.reparo) != "real":
+        parser.error("--eval-agent-id needs --reparo real")
     if cast("str", args.reparo) == "real":
         base_url = cast("str | None", args.reparo_base_url)
         if not base_url:
             parser.error("--reparo real needs --reparo-base-url")
         try:
-            reparo = ReparoSettings(base_url=base_url)  # the key from REPARO_ROBOT_KEY
+            reparo = ReparoSettings(  # the key from REPARO_ROBOT_KEY
+                base_url=base_url, eval_agent_id=eval_agent_id or None
+            )
         except ValidationError as exc:
             parser.error(f"invalid Reparo settings: {exc.errors()[0]['msg']}")
 

@@ -126,3 +126,24 @@ def test_validating_a_mapping_also_falls_back_to_the_environment(
     settings = ReparoSettings.model_validate({"base_url": "https://reparo.example.com"})
 
     assert settings.robot_key.get_secret_value() == "from-env"
+
+
+def test_an_eval_agent_id_switches_to_the_eval_endpoint() -> None:
+    agent_id = "3f2b8c1e-0d4a-4b6f-9a1c-2e7d5f8b9c0a"
+    settings = ReparoSettings(
+        base_url="https://reparo.example.com", robot_key="k", eval_agent_id=agent_id
+    )
+
+    assert str(settings.eval_agent_id) == agent_id
+    assert settings.websocket_url == "wss://reparo.example.com/evals/recovery/ws"
+    assert (
+        settings.report_result_url("abc")
+        == "https://reparo.example.com/recovery/report_result/abc"
+    )
+
+
+def test_an_eval_agent_id_must_be_a_uuid() -> None:
+    with pytest.raises(ValidationError, match="eval_agent_id"):
+        _ = ReparoSettings(
+            base_url="https://reparo.example.com", robot_key="k", eval_agent_id="gui"
+        )

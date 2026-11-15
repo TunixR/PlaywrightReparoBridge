@@ -143,7 +143,8 @@ def build_payload(
         "errored_act": errored_act,
         "model": model,
         "capabilities": capabilities,
+        # The Activity's own task, else its name: Reparo's evals need one.
+        "recovery_task": errored.event.activity.recovery_task
+        or errored.event.activity.name,
     }
-    if errored.event.activity.recovery_task is not None:
-        body["recovery_task"] = errored.event.activity.recovery_task
     return Payload(body, len(entries), len(variables), len(model.encode()))

@@ -6,6 +6,7 @@ import os
 from datetime import timedelta
 from typing import ClassVar
 from urllib.parse import quote, urlsplit
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
@@ -21,6 +22,9 @@ class ReparoSettings(BaseModel):
 
     `robot_key` comes from the argument, else from the `REPARO_ROBOT_KEY` environment variable;
     with neither, construction fails. It is held as a secret and never shown.
+
+    `eval_agent_id` switches the run to Reparo's eval endpoint: the UI failure is evaluated
+    against that GUI agent (sent as `X-AGENT-ID`) instead of production's own agent.
     """
 
     model_config: ClassVar[ConfigDict] = ConfigDict(
@@ -35,6 +39,7 @@ class ReparoSettings(BaseModel):
         default=DEFAULT_RECOVERY_DEADLINE, gt=timedelta(0)
     )
     connect_attempts: int = Field(default=3, ge=1)
+    eval_agent_id: UUID | None = None
 
     def __init__(
         self,
@@ -45,6 +50,7 @@ class ReparoSettings(BaseModel):
         silence_timeout: timedelta = DEFAULT_SILENCE_TIMEOUT,
         recovery_deadline: timedelta = DEFAULT_RECOVERY_DEADLINE,
         connect_attempts: int = 3,
+        eval_agent_id: str | UUID | None = None,
     ) -> None:
         if robot_key is None or robot_key == "":
             robot_key = os.environ.get(ROBOT_KEY_ENV) or None
@@ -55,6 +61,7 @@ class ReparoSettings(BaseModel):
             silence_timeout=silence_timeout,
             recovery_deadline=recovery_deadline,
             connect_attempts=connect_attempts,
+            eval_agent_id=eval_agent_id,
         )
 
     @field_validator("robot_key", mode="before")
@@ -74,8 +81,13 @@ class ReparoSettings(BaseModel):
 
     @property
     def websocket_url(self) -> str:
-        """Reparo's recovery WebSocket endpoint (http becomes ws, https becomes wss)."""
+        """Reparo's recovery WebSocket endpoint (http becomes ws, https becomes wss).
+
+        With `eval_agent_id`, the eval endpoint instead.
+        """
         ws_base = "ws" + self.base_url.removeprefix("http")
+        if self.eval_agent_id is not None:
+            return f"{ws_base}/evals/recovery/ws"
         return f"{ws_base}/recovery/robot_exception/ws"
 
     def report_result_url(self, recovery_id: str) -> str:
