@@ -109,7 +109,8 @@ The rules that matter:
   JSON-serialisable: they are sent to Reparo.
 - **Activities** (`p.activity(name, recoverable=True, recovery_task=None)`) group Events into
   business steps for the UI log. Every Event belongs to exactly one Activity, and Activities
-  don't nest. `recovery_task` describes, for Reparo, what recovering that Activity should achieve.
+  don't nest. `recovery_task` describes, for Reparo, what recovering that Activity should achieve;
+  without one, the Activity's name is sent.
 - **Control flow** belongs to the bridge, so it can resume anywhere:
   `p.for_each(id, over=<list Variable>, as_=<item Variable>)`, and
   `p.if_(id, cond, label=)` / `p.elif_(cond, label=)` / `p.else_()`. Conditions are pure
@@ -189,6 +190,7 @@ A frozen pydantic model, built once and reused across runs.
 | `silence_timeout` | 2 min | How long Reparo may stay silent during a Recovery before the bridge gives up |
 | `recovery_deadline` | 10 min | The longest a whole Recovery may take |
 | `connect_attempts` | 3 | Attempts to open Reparo's WebSocket, with backoff between them |
+| `eval_agent_id` | `None` | A GUI agent's id (UUID). When set, the failure goes to Reparo's eval endpoint (`/evals/recovery/ws`) with the id as `X-AGENT-ID`, so that agent is evaluated against it. The eval reads the payload's `recovery_task` (the failing Activity's, else its name). An unknown agent id ends the run `local`, like a rejected robot key |
 
 ## Outcomes
 
@@ -231,6 +233,8 @@ length), Variable values (only their names) and the full payload are never logge
 `reparo_playwright_bridge.testing.FakeReparo` (needs the `[fake]` extra) is a Reparo on localhost
 that plays a hand-written Recovery script against your real browser. It checks every payload
 against Reparo's schema and every screenshot reply, and records what happened.
+With `ReparoSettings(..., eval_agent_id=reparo.agent_id)` it is reached on the eval endpoint
+instead; it accepts only that agent id, as it does the robot key, and plays the same script.
 
 ```python
 from reparo_playwright_bridge import ReparoSettings, run
@@ -283,6 +287,8 @@ uv run python -m examples.spending_approval --ui changed --reparo fake          
 uv run python -m examples.spending_approval --ui changed --reparo fake --case full -v --headed
 REPARO_ROBOT_KEY=… uv run python -m examples.spending_approval --ui changed --reparo real \
     --reparo-base-url https://reparo.example.com
+REPARO_ROBOT_KEY=… uv run python -m examples.spending_approval --ui changed --reparo real \
+    --reparo-base-url http://localhost:8000 --eval-agent-id <gui-agent-uuid>   # an eval
 ```
 
 `--case single` (default) has one request; `--case full` has five, exercising every branch. `-v`

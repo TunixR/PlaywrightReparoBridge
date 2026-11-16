@@ -30,7 +30,11 @@ from reparo_playwright_bridge._result import FailedOutcome, FailureType
 from reparo_playwright_bridge._settings import ReparoSettings
 
 ROBOT_KEY_HEADER = "X-ROBOT-KEY"
+AGENT_ID_HEADER = "X-AGENT-ID"
+"""The GUI agent an eval runs against (`ReparoSettings.eval_agent_id`)."""
 INVALID_RECOVERY_PAYLOAD = "INVALID_RECOVERY_PAYLOAD"
+EVAL_VALIDATION_ERROR = "VALIDATION_ERROR"
+"""The eval endpoint's code for a payload or recovery task it can't use."""
 REJECTED_KEY_CLOSE = 1008
 REJECTED_KEY_STATUS = 403
 """Reparo closes with 1008 before accepting the socket, which reaches the robot as HTTP 403."""
@@ -83,8 +87,11 @@ class Ended:
         return cls("recovery_unavailable", failure_type, reason)
 
     @classmethod
-    def key_rejected(cls, how: str) -> Self:
-        return cls("local", "local", f"Reparo rejected the robot key ({how})")
+    def key_rejected(cls, how: str, settings: ReparoSettings) -> Self:
+        what = (
+            "robot key" if settings.eval_agent_id is None else "robot key or agent id"
+        )
+        return cls("local", "local", f"Reparo rejected the {what} ({how})")
 
     @classmethod
     def environment(cls, reason: str) -> Self:
@@ -101,6 +108,9 @@ async def recover(
     recovery: str,
 ) -> Done | Ended:
     """Connect, send `payload`, and serve Reparo until it ends the Recovery.
+
+    With `settings.eval_agent_id`, this is an eval: the payload goes to the eval endpoint, and
+    Reparo's `eval_result` stands in for `done`.
 
     Connecting is retried; once the payload is sent the bridge never reconnects, so a reconnect
     can never start a second Recovery. `handler` serves Reparo's Observations and Recovery
@@ -126,12 +136,18 @@ async def recover(
                     payload.variable_count,
                     extra=dict(extra),
                 )
+                if settings.eval_agent_id is not None:
+                    recovery_log.info(
+                        "evaluating GUI agent %s",
+                        settings.eval_agent_id,
+                        extra=dict(extra),
+                    )
                 timer = _Timer(settings.silence_timeout, settings.recovery_deadline)
                 session = handler.recovering(context, extra)
                 return await _serve(ws, timer, watch, session, recovery, extra)
             except ConnectionClosed as closed:
                 if closed.rcvd is not None and closed.rcvd.code == REJECTED_KEY_CLOSE:
-                    return Ended.key_rejected(f"close {REJECTED_KEY_CLOSE}")
+                    return Ended.key_rejected(f"close {REJECTED_KEY_CLOSE}", settings)
                 return Ended.unavailable(
                     "Reparo closed the connection before ending the Recovery"
                 )
@@ -142,9 +158,11 @@ async def _connect(
 ) -> ClientConnection | Ended:
     """Open the recovery WebSocket in up to `connect_attempts` attempts.
 
-    A rejected robot key is never retried.
+    A rejected robot key (or agent id) is never retried.
     """
     headers = {ROBOT_KEY_HEADER: settings.robot_key.get_secret_value()}
+    if settings.eval_agent_id is not None:
+        headers[AGENT_ID_HEADER] = str(settings.eval_agent_id)
     attempts = settings.connect_attempts
     for attempt in range(1, attempts + 1):
         recovery_log.debug(
@@ -157,7 +175,7 @@ async def _connect(
         except InvalidStatus as exc:
             status = exc.response.status_code
             if status == REJECTED_KEY_STATUS:
-                return Ended.key_rejected(f"HTTP {REJECTED_KEY_STATUS}")
+                return Ended.key_rejected(f"HTTP {REJECTED_KEY_STATUS}", settings)
             why = f"HTTP {status}"
         except (OSError, InvalidHandshake, TimeoutError) as exc:
             why = type(exc).__name__
@@ -335,7 +353,9 @@ async def _serve(
             case "action":
                 await _send_reply(ws, await session.act((message or {}).get("content")))
             case "done":
-                return _done(message or {})
+                return _done(message or {}, "id")
+            case "eval_result":
+                return _done(message or {}, "exception_id")
             case "error":
                 return _error(message or {}, extra)
             case _:
@@ -378,8 +398,9 @@ def _decode(frame: str | bytes) -> dict[str, object] | None:
     return cast("dict[str, object]", message) if isinstance(message, dict) else None
 
 
-def _done(message: dict[str, object]) -> Done | Ended:
-    recovery_id = message.get("id")
+def _done(message: dict[str, object], id_field: str) -> Done | Ended:
+    """A `done` (Recovery id in `id`) or an `eval_result` (in `exception_id`)."""
+    recovery_id = message.get(id_field)
     try:
         content = ContinuationContent.model_validate(message.get("content"))
     except ValidationError:
@@ -393,12 +414,12 @@ def _done(message: dict[str, object]) -> Done | Ended:
 
 def _error(message: dict[str, object], extra: Mapping[str, object]) -> Ended:
     code = message.get("code")
-    if code == INVALID_RECOVERY_PAYLOAD:
+    if code in (INVALID_RECOVERY_PAYLOAD, EVAL_VALIDATION_ERROR):
         recovery_log.error(
             "Reparo rejected the payload: %s", message.get("content"), extra=dict(extra)
         )
         return Ended.unavailable(
-            f"Reparo rejected the Recovery payload ({INVALID_RECOVERY_PAYLOAD})",
+            f"Reparo rejected the Recovery payload ({code})",
             "payload_rejected",
         )
     return Ended.unavailable(f"Reparo answered with error {code}")

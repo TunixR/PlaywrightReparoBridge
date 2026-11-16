@@ -364,7 +364,7 @@ async def test_entries_name_their_model_event_and_the_recovery_task_is_sent(
     assert payload["recovery_task"] == "Approve it by hand"
 
 
-async def test_no_recovery_task_is_sent_when_the_activity_declares_none(
+async def test_the_activity_name_is_the_recovery_task_when_the_activity_declares_none(
     context: BrowserContext, site: FixtureServer
 ) -> None:
     _ = site.page("/page", PAGE)
@@ -377,7 +377,7 @@ async def test_no_recovery_task_is_sent_when_the_activity_declares_none(
             case_id=1,
         )
 
-    assert "recovery_task" not in reparo.payloads[0]
+    assert reparo.payloads[0]["recovery_task"] == "Approve the request"
 
 
 # --------------------------------------------------------------------------- Reparo's answer

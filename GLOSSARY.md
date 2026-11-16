@@ -73,7 +73,8 @@ Recovery is found in Reparo and its result reported back.
 _Avoid_: exception id, robot exception id.
 
 **Recovery task**: A description, written by the process author, of what recovering an
-**Activity** should achieve, offered to Reparo as a preferred plan.
+**Activity** should achieve, offered to Reparo as a preferred plan. When the author writes
+none, the **Activity**'s name stands in.
 _Avoid_: recovery hint.
 
 **Modality**: A way the bridge lets Reparo see the browser and target elements during a

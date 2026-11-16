@@ -34,6 +34,7 @@ from reparo_playwright_bridge.testing._steps import (
 )
 
 ROBOT_KEY_HEADER = "X-ROBOT-KEY"
+AGENT_ID_HEADER = "X-AGENT-ID"
 PING_INTERVAL = 10.0
 INVALID_RECOVERY_PAYLOAD = "INVALID_RECOVERY_PAYLOAD"
 SCREENSHOT_BUDGET = 15.0
@@ -62,7 +63,8 @@ class FakeReparo:
 
     `async with FakeReparo(script) as reparo:` serves the recovery WebSocket and
     `POST report_result` on localhost. Point `ReparoSettings(base_url=reparo.url,
-    robot_key=reparo.robot_key)` at it. `context` is needed only to resolve `Locate` targets
+    robot_key=reparo.robot_key)` at it; add `eval_agent_id=reparo.agent_id` to reach it on the
+    eval endpoint, which plays the same script. `context` is needed only to resolve `Locate` targets
     and to check screenshot replies against the viewport size.
 
     It checks every reply to its own screenshot requests (`Observe`, `Act`): one binary JPEG,
@@ -86,6 +88,8 @@ class FakeReparo:
         self._context: BrowserContext | None = context  # resolves `Locate` targets
         self.ping_interval: float = ping_interval
         self.robot_key: str = secrets.token_urlsafe(16)
+        self.agent_id: str = str(uuid.uuid4())
+        """The one GUI agent the eval endpoint accepts as `X-AGENT-ID`."""
         self.payloads: list[JsonObject] = []
         self.replies: list[object] = []
         self.aborts: list[JsonObject] = []
@@ -109,6 +113,7 @@ class FakeReparo:
     async def __aenter__(self) -> Self:
         app = web.Application()
         _ = app.router.add_get("/recovery/robot_exception/ws", self._recovery_ws)
+        _ = app.router.add_get("/evals/recovery/ws", self._recovery_ws)
         _ = app.router.add_post(
             "/recovery/report_result/{recovery_id}", self._report_result
         )
@@ -161,6 +166,13 @@ class FakeReparo:
         if request.headers.get(ROBOT_KEY_HEADER) != self.robot_key:
             testing_log.warning("FakeReparo rejected a robot key (close 1008)")
             _ = await ws.close(code=1008, message=b"Invalid robot key")
+            return ws
+        if (
+            request.path == "/evals/recovery/ws"
+            and request.headers.get(AGENT_ID_HEADER) != self.agent_id
+        ):
+            testing_log.warning("FakeReparo rejected an agent id (close 1008)")
+            _ = await ws.close(code=1008, message=b"Invalid robot key or agent id")
             return ws
         pinger = asyncio.create_task(self._keep_alive(ws))
         try:
