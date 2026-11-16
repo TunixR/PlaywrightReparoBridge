@@ -29,6 +29,14 @@ uv add "reparo-playwright-bridge[fake] @ git+https://github.com/TunixR/Playwrigh
 uv run playwright install chromium
 ```
 
+On a clean Linux machine (a server, a container, CI), Chromium's system libraries are missing.
+Playwright's driver also needs `libatomic1` before it can install anything. On Debian or Ubuntu:
+
+```bash
+sudo apt-get install -y libatomic1
+uv run playwright install --with-deps chromium   # --with-deps installs Chromium's libraries (sudo)
+```
+
 ## Authoring a Process
 
 A Process is built with `with` blocks and decorators. Mistakes in its structure (an Event outside
@@ -291,6 +299,12 @@ REPARO_ROBOT_KEY=… uv run python -m examples.spending_approval --ui changed --
     --reparo-base-url http://localhost:8000 --eval-agent-id <gui-agent-uuid>   # an eval
 ```
 
+The `real` runs need a Reparo and a robot key. To run one locally, follow the
+[Reparo Quickstart](https://github.com/TunixR/Reparo/tree/future_contract#quickstart) (the `future_contract` branch speaks this contract): it starts Reparo on
+`http://localhost:8000`, seeds the default agents, and creates the key with `POST /keys`. A
+Recovery's outcome depends on the LLM, so `recovery_failed` can happen even when the setup is
+correct; check `str(result)` and Reparo's traces.
+
 `--case single` (default) has one request; `--case full` has five, exercising every branch. `-v`
 logs at DEBUG and `--headed` shows the browser. It logs to stdout, and the outcome line is its
 result: exit code 0 means `completed`, 1 any other outcome.
@@ -306,7 +320,7 @@ Design decisions are in [docs/adr](docs/adr).
 
 ```bash
 uv sync
-uv run playwright install chromium  # once: tests use real headless Chromium
+uv run playwright install chromium  # once: tests use real headless Chromium (see Install for Linux deps)
 uv run pytest
 uv run ruff check
 uv run ruff format
