@@ -305,11 +305,11 @@ async def test_fail_sends_done_with_success_false() -> None:
 
 
 async def test_send_error_sends_an_error_frame_and_closes() -> None:
-    _, frames, close_code = await play([SendError("NO_GATEWAY_AGENT")])
+    _, frames, close_code = await play([SendError("NO_AGENT_GRAPH")])
 
     [error] = [loads(frame) for frame in frames]
     assert error["type"] == "error"
-    assert error["code"] == "NO_GATEWAY_AGENT"
+    assert error["code"] == "NO_AGENT_GRAPH"
     assert close_code == 1000
 
 
