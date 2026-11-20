@@ -1,0 +1,23 @@
+name: PR title
+# The PR title becomes the squash commit, so it follows the commit format the commit-msg hook
+# checks: `type(scope)!: what` (scripts/commit_format.py, AGENTS.md -> Commits).
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  commit-format-title:
+    runs-on: ubuntu-latest
+    steps:
+      # No submodules: the skills submodule is private home, and the check doesn't need it.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Check title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: python3 scripts/commit_format.py check-title "$TITLE"
