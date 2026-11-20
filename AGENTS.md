@@ -26,10 +26,13 @@ map's frontier.
 
 ## Skills
 
-`.agents/skills` is a submodule of home's generated `skills` branch, and `.claude/skills` links to
-it. Edit skills only in home; this repo picks them up when it merges a bump PR. Clone with
-`--recurse-submodules`, or fill it later with `git submodule update --init`. Without access to
-home it stays empty, and nothing here depends on it.
+`.agents/reparo-skills` is a submodule of home's generated `skills` branch. `.agents/skills`
+holds one link per shared skill (`<name> -> ../reparo-skills/<name>`) and this repo's own skills,
+and `.claude/skills` links to it. Edit shared skills only in home; this repo picks them up, links
+included, when it merges a bump PR. Add a skill only this repo needs as a folder in
+`.agents/skills`; it wins over a shared skill of the same name. Clone with `--recurse-submodules`,
+or fill it later with `git submodule update --init`. Without access to home the submodule stays
+empty and the links dangle; nothing here depends on them.
 
 ## Commits
 
@@ -56,7 +59,7 @@ The scopes below are the whole list; the checker reads it from this section.
 - `glossary`: `GLOSSARY.md`
 - `adr`: `docs/adr/`
 - `agents`: `AGENTS.md`, `CLAUDE.md`
-- `skills`: the skills submodule and its link
+- `skills`: the skills submodule, the links to it and this repo's own skills
 - `ci`: `.github/`, `.githooks/`, `scripts/`
 - `deps`: dependency bumps: `pyproject.toml`, `uv.lock`
 

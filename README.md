@@ -333,7 +333,7 @@ uv run ruff format
 uv run basedpyright
 ```
 
-`--recurse-submodules` fills `.agents/skills`, the agent skills shared from the private ReparoHome
-repo (`git submodule update --init` does it later). Without access to it the folder stays empty,
-and nothing else depends on it. Commits and PR titles follow `type(scope)!: what`, with the scopes
+`--recurse-submodules` fills `.agents/reparo-skills`, the agent skills shared from the private
+ReparoHome repo (`git submodule update --init` does it later); `.agents/skills` links to each of
+them. Without access to it the folder stays empty, and nothing else depends on it. Commits and PR titles follow `type(scope)!: what`, with the scopes
 listed in [AGENTS.md](AGENTS.md#commits); the hook and a CI job on PR titles check it.
