@@ -437,7 +437,7 @@ def with_hook_returning_unnamed_variables(process: Process) -> Process:
         (
             lambda: failing_after(approval_process([]), _unreachable_service),
             {},
-            "Environment failure",
+            "Infrastructure failure",
             "wrap_up",
         ),
         (lambda: with_crashing_check(approval_process([])), {}, "Process bug", None),
@@ -457,7 +457,7 @@ def with_hook_returning_unnamed_variables(process: Process) -> Process:
     ],
     ids=[
         "process bug",
-        "environment failure",
+        "infrastructure failure",
         "crashing check",
         "crashing hook",
         "hook returning unnamed Variables",

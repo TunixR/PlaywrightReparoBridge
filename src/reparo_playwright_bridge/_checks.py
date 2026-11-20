@@ -52,7 +52,7 @@ async def run_checks(
     """Run every check in declaration order: `completed` if all are met, else `checks_failed`.
 
     A check that raises or returns anything else crashes: it stops the remaining checks and ends
-    the run `failed_outcome`, as a Process bug unless it hit an Environment failure.
+    the run `failed_outcome`, as a Process bug unless it hit an Infrastructure failure.
     """
     extra: dict[str, object] = {"case_id": case_id}
     unmet: list[str] = []

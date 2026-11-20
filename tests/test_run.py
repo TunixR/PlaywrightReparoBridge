@@ -441,7 +441,7 @@ async def _crashed_page(ctx: EventContext) -> None:
 
 
 @pytest.mark.parametrize("body", [_unreachable_service, _closed_page, _crashed_page])
-async def test_an_environment_failure_ends_the_run_local(
+async def test_an_infrastructure_failure_ends_the_run_local(
     context: BrowserContext,
     reparo: ReparoSettings,
     site: FixtureServer,
@@ -461,7 +461,7 @@ async def test_an_environment_failure_ends_the_run_local(
     assert result.failure.type == "local"
     assert result.failure.event_id == "fail_here"
     assert result.reason is not None
-    assert result.reason.startswith("Environment failure: ")
+    assert result.reason.startswith("Infrastructure failure: ")
     assert "\n" not in result.reason
     assert ran_after == []
     assert [r for r in caplog.records if r.levelno == logging.ERROR and r.exc_info]
@@ -519,7 +519,7 @@ async def test_a_failure_while_finding_the_active_page_is_still_a_result(
     assert result.failure is not None
     assert result.failure.event_id == "_read_page"
     assert result.reason is not None
-    assert result.reason.startswith("Environment failure: ")
+    assert result.reason.startswith("Infrastructure failure: ")
 
 
 # --------------------------------------------------------------------------- loops and branches

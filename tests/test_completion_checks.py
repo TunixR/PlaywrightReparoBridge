@@ -259,7 +259,7 @@ async def test_a_crashing_check_is_a_process_bug_that_stops_the_remaining_checks
     assert check.__name__ in crashed[0].getMessage()
 
 
-async def test_a_check_that_hits_an_environment_failure_keeps_that_class(
+async def test_a_check_that_hits_an_infrastructure_failure_keeps_that_class(
     context: BrowserContext, reparo: ReparoSettings, site: FixtureServer
 ) -> None:
     _ = site.page("/budget", BUDGET)
@@ -280,7 +280,7 @@ async def test_a_check_that_hits_an_environment_failure_keeps_that_class(
     assert result.failure is not None
     assert result.failure.type == "local"
     assert result.reason is not None
-    assert result.reason.startswith("Environment failure: ")
+    assert result.reason.startswith("Infrastructure failure: ")
     assert "page_closed" in result.reason
 
 

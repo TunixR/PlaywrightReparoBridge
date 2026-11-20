@@ -1,4 +1,4 @@
-"""Failure classification: what an Event body raised is a UI failure, an Environment failure or a Process bug."""
+"""Failure classification: what an Event body raised is a UI failure, an Infrastructure failure or a Process bug."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class ProcessBug(Exception):
 
 class FailureKind(enum.Enum):
     UI = "UI failure"
-    ENVIRONMENT = "Environment failure"
+    INFRASTRUCTURE = "Infrastructure failure"
     PROCESS_BUG = "Process bug"
 
 
@@ -29,7 +29,7 @@ ELEMENT_TIMEOUT = "UiElementTimeout"
 ELEMENT_AMBIGUOUS = "UiElementAmbiguous"
 UI_ACTION_FAILED = "UiActionFailed"
 
-_ENVIRONMENT_MARKERS = (
+_INFRASTRUCTURE_MARKERS = (
     "net::ERR_",
     "Target page, context or browser has been closed",
     "Target closed",
@@ -40,7 +40,7 @@ _ENVIRONMENT_MARKERS = (
     "Protocol error",
 )
 # Playwright prefixes each error with the API call that raised it.
-_ENVIRONMENT_PREFIXES = ("APIRequestContext.", "APIResponse.")
+_INFRASTRUCTURE_PREFIXES = ("APIRequestContext.", "APIResponse.")
 _COMPONENT_PREFIXES = ("Locator.", "ElementHandle.", "FrameLocator.")
 
 
@@ -153,7 +153,7 @@ def classify(exc: BaseException) -> Classified:
     if isinstance(exc, PlaywrightError):
         # Only the first line is the error; the rest is Playwright's call log, which
         # repeats selectors and so can contain any text. Shapes whose first line quotes
-        # the selector (strict mode) are matched before the Environment markers.
+        # the selector (strict mode) are matched before the Infrastructure markers.
         message = _first_line(exc.message)
         if isinstance(exc, PlaywrightTimeoutError):
             return Classified(
@@ -163,10 +163,10 @@ def classify(exc: BaseException) -> Classified:
             return Classified(
                 FailureKind.UI, _describe_component_error(message), ELEMENT_AMBIGUOUS
             )
-        if any(marker in message for marker in _ENVIRONMENT_MARKERS):
-            return Classified(FailureKind.ENVIRONMENT, message)
-        if message.startswith(_ENVIRONMENT_PREFIXES):
-            return Classified(FailureKind.ENVIRONMENT, message)
+        if any(marker in message for marker in _INFRASTRUCTURE_MARKERS):
+            return Classified(FailureKind.INFRASTRUCTURE, message)
+        if message.startswith(_INFRASTRUCTURE_PREFIXES):
+            return Classified(FailureKind.INFRASTRUCTURE, message)
         if message.startswith(_COMPONENT_PREFIXES):
             return Classified(
                 FailureKind.UI, _describe_component_error(message), UI_ACTION_FAILED
@@ -185,10 +185,10 @@ def classify(exc: BaseException) -> Classified:
 def classify_outside_event(exc: BaseException) -> Classified:
     """A raise from author code that isn't an Event body (a Completion check, `on_continuation`).
 
-    Only an Environment failure keeps its class: there is no Event for a UI failure to belong to,
+    Only an Infrastructure failure keeps its class: there is no Event for a UI failure to belong to,
     so anything else is a Process bug.
     """
     classified = classify(exc)
-    if classified.kind in (FailureKind.ENVIRONMENT, FailureKind.PROCESS_BUG):
+    if classified.kind in (FailureKind.INFRASTRUCTURE, FailureKind.PROCESS_BUG):
         return classified
     return Classified(FailureKind.PROCESS_BUG, classified.summary)

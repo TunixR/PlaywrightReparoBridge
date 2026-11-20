@@ -132,7 +132,7 @@ async def _recovery_handler(
     if handler.needs_fixed_viewport:
         try:
             page = await active_page(context)
-        except PlaywrightError:  # the first Event reports the Environment failure
+        except PlaywrightError:  # the first Event reports the Infrastructure failure
             return handler
         if page.viewport_size is None:
             raise _LocalFailure(

@@ -102,7 +102,7 @@ async def _click_missing(ctx: EventContext) -> None:
     await ctx.page.get_by_role("button", name="Reject").click(timeout=300)
 
 
-async def _click_missing_whose_selector_names_an_environment_failure(
+async def _click_missing_whose_selector_names_an_infrastructure_failure(
     ctx: EventContext,
 ) -> None:
     # The call log repeats the selector; only the error itself decides the class.
@@ -128,7 +128,7 @@ async def _declared_failure(ctx: EventContext) -> None:
     [
         _click_disabled,
         _click_missing,
-        _click_missing_whose_selector_names_an_environment_failure,
+        _click_missing_whose_selector_names_an_infrastructure_failure,
         _click_ambiguous,
         _failed_expect,
         _declared_failure,
@@ -198,9 +198,12 @@ async def _unreachable_service(ctx: EventContext) -> None:
 
 @pytest.mark.parametrize(
     ("body", "kind"),
-    [(_divide_by_zero, "Process bug"), (_unreachable_service, "Environment failure")],
+    [
+        (_divide_by_zero, "Process bug"),
+        (_unreachable_service, "Infrastructure failure"),
+    ],
 )
-async def test_process_bugs_and_environment_failures_never_reach_reparo(
+async def test_process_bugs_and_infrastructure_failures_never_reach_reparo(
     context: BrowserContext,
     site: FixtureServer,
     body: Callable[[EventContext], Awaitable[None]],

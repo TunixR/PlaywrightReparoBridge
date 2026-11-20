@@ -97,7 +97,7 @@ class RecoveryErroredAct(_Strict):
 
 
 class RobotCapabilities(_Strict):
-    """The robot's interaction modalities, most preferred first, and whether it has OCR.
+    """The robot's Modalities, most preferred first, and whether it offers Text targeting (`ocr`).
 
     `details` only tells the agent how to write targets (e.g. `{"dom": {"selector_syntax": "css"}}`).
     """

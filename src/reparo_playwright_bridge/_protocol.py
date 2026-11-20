@@ -45,6 +45,7 @@ CONNECT_BACKOFF = (1.0, 2.0, 4.0)
 SILENCE_TIMEOUT = "RecoverySilenceTimeout"
 DEADLINE_EXCEEDED = "RecoveryDeadlineExceeded"
 ENVIRONMENT_FAILURE = "EnvironmentFailure"
+"""Sent on an Infrastructure failure; the code keeps its older name (GLOSSARY.md)."""
 
 # websockets logs handshake headers at DEBUG, which include the robot key: give it a logger
 # that is never wired to any handler.
@@ -53,7 +54,7 @@ _SILENT.disabled = True
 
 
 class ContinuationContent(BaseModel):
-    """The future `done.content` (Reparo#230 / #231)."""
+    """`done.content`: the Continuation, by Event id and loop pass (Reparo#230 / #231)."""
 
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="ignore", strict=True)
 
@@ -94,7 +95,7 @@ class Ended:
         return cls("local", "local", f"Reparo rejected the {what} ({how})")
 
     @classmethod
-    def environment(cls, reason: str) -> Self:
+    def infrastructure(cls, reason: str) -> Self:
         return cls("local", "local", reason)
 
 
@@ -116,16 +117,16 @@ async def recover(
     can never start a second Recovery. `handler` serves Reparo's Observations and Recovery
     actions; each reply is the next frame the bridge sends. The page or `context` going away
     ends the Recovery as an
-    Environment failure; `recovery` names the Recovery in that reason (`Event <id> #<pass>`).
+    Infrastructure failure; `recovery` names the Recovery in that reason (`Event <id> #<pass>`).
     If it goes away before the payload is sent, no payload is sent.
     """
-    with _EnvironmentWatch(context) as watch:
+    with _BrowserWatch(context) as watch:
         ws = await _connect(settings, extra)
         if isinstance(ws, Ended):
             return ws
         async with ws:
             if watch.lost.is_set():
-                return _environment_failure(watch, recovery, extra)
+                return _infrastructure_failure(watch, recovery, extra)
             try:
                 await ws.send(json.dumps(payload.body))
                 recovery_log.info(
@@ -226,12 +227,12 @@ def _seconds(span: timedelta) -> str:
     return f"{span.total_seconds():g} s"
 
 
-class _EnvironmentWatch:
-    """Notices the Environment going away while a Recovery runs.
+class _BrowserWatch:
+    """Notices the browser going away while a Recovery runs.
 
     It follows the active page as the engine defines it (the most recently opened page that is
     still open), so a tab opened during the Recovery is watched from then on. The active page
-    crashing, the last open page closing, or the context closing loses the Environment; closing
+    crashing, the last open page closing, or the context closing loses the browser; closing
     one tab while another is open does not.
     """
 
@@ -248,7 +249,7 @@ class _EnvironmentWatch:
             self.lost.set()
 
     def _follow(self, gone: str) -> None:
-        """Watch the current active page; with none left, the Environment is `gone`."""
+        """Watch the current active page; with none left, the browser is `gone`."""
         page = latest_open_page(self._context)
         if page is self._page:
             return
@@ -289,18 +290,18 @@ class _EnvironmentWatch:
         self._context.remove_listener("close", self._context_closed)
 
 
-def _environment_failure(
-    watch: _EnvironmentWatch, recovery: str, extra: Mapping[str, object]
+def _infrastructure_failure(
+    watch: _BrowserWatch, recovery: str, extra: Mapping[str, object]
 ) -> Ended:
-    reason = f"{FailureKind.ENVIRONMENT.value}: {watch.cause} during the Recovery of {recovery}"
+    reason = f"{FailureKind.INFRASTRUCTURE.value}: {watch.cause} during the Recovery of {recovery}"
     recovery_log.error("%s; ending the Recovery", reason, extra=dict(extra))
-    return Ended.environment(reason)
+    return Ended.infrastructure(reason)
 
 
 async def _next_frame(
-    ws: ClientConnection, timer: _Timer, watch: _EnvironmentWatch
+    ws: ClientConnection, timer: _Timer, watch: _BrowserWatch
 ) -> str | bytes | None:
-    """Reparo's next frame, or None when a timer ran out or the Environment went away first."""
+    """Reparo's next frame, or None when a timer ran out or the browser went away first."""
     receiving = asyncio.ensure_future(ws.recv())
     losing = asyncio.ensure_future(watch.lost.wait())
     try:
@@ -314,7 +315,7 @@ async def _next_frame(
         _ = receiving.cancel()  # cancelling recv() loses no data
     if watch.lost.is_set():
         if receiving.done() and not receiving.cancelled():
-            _ = receiving.exception()  # dropped: the Environment failure wins
+            _ = receiving.exception()  # dropped: the Infrastructure failure wins
         return None
     return receiving.result() if receiving.done() else None
 
@@ -322,7 +323,7 @@ async def _next_frame(
 async def _serve(
     ws: ClientConnection,
     timer: _Timer,
-    watch: _EnvironmentWatch,
+    watch: _BrowserWatch,
     session: RecoverySession,
     recovery: str,
     extra: Mapping[str, object],
@@ -330,7 +331,7 @@ async def _serve(
     while True:
         frame = await _next_frame(ws, timer, watch)
         if watch.lost.is_set():
-            ended = _environment_failure(watch, recovery, extra)
+            ended = _infrastructure_failure(watch, recovery, extra)
             await _abort(ws, ENVIRONMENT_FAILURE, ended.reason, extra)
             return ended
         if frame is None:

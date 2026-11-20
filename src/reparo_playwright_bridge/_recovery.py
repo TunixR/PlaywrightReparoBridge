@@ -36,7 +36,7 @@ class RecoveryHandler:
 
     @property
     def capabilities(self) -> dict[str, object]:
-        """The payload's `capabilities`, as Reparo#217 defines them."""
+        """The payload's `capabilities` (Reparo's `RecoveryCapabilities`); no Text targeting."""
         return {"modalities": [m.name for m in self.modalities], "ocr": False}
 
     @property

@@ -2,8 +2,9 @@
 
 A **Completion check** states what the robot can believe about its own completion: once the
 Process reaches its end, with or without a Recovery, the check looks at the page and the final
-Variables and answers **met** or **not met, because …**. Vocabulary is in
-[GLOSSARY.md](../../GLOSSARY.md).
+Variables and answers **met** or **not met, because …**. Vocabulary is in home's
+[GLOSSARY.md](https://github.com/TunixR/ReparoHome/blob/main/GLOSSARY.md), Playwright terms in
+[this repo's](../../GLOSSARY.md).
 
 Write each check so it always gives that answer, whatever it meets:
 
@@ -32,7 +33,7 @@ that isn't right. A crash says something else: your check has a bug. Worse, afte
 crash turns a run Reparo recovered into `continuation_failed`, and it is reported to Reparo as a
 failed Recovery when what failed was the check.
 
-Only an Environment failure (the browser closed, the page crashed) keeps its class when a check
+Only an Infrastructure failure (the browser closed, the page crashed) keeps its class when a check
 raises; a missing element, a timeout or a failed `expect` is a crash of your check, reported as a
 Process bug.
 
