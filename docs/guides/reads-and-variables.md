@@ -9,7 +9,9 @@ Two habits make a Process behave well when Reparo recovers it:
    earlier Variables, accumulated, or picked up in passing by an action Event.
 
 Both follow from two things the bridge does: what it puts in the **UI log** Reparo receives, and
-how a **Continuation** resumes the run. Vocabulary is in [GLOSSARY.md](../../GLOSSARY.md).
+how a **Continuation** resumes the run. Vocabulary is in home's
+[GLOSSARY.md](https://github.com/TunixR/ReparoHome/blob/main/GLOSSARY.md), Playwright terms in
+[this repo's](../../GLOSSARY.md).
 
 ## What Reparo sees: the UI log
 

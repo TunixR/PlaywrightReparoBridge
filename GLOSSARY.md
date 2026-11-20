@@ -1,112 +1,84 @@
 # Glossary
 
-Language for the Reparo Playwright Bridge. Terms align with Reparo's recovery contract where it
-already names the concept.
+**Reparo-wide terms live in home's
+[`GLOSSARY.md`](https://github.com/TunixR/ReparoHome/blob/main/GLOSSARY.md)** (private; `../ReparoHome/GLOSSARY.md`
+in a local clone): Process, Event, Event id, Activity, Variables, Process model, Logged event, UI
+log, Completion check, Run outcome, Modality, Observation, Recovery action, Text targeting, the
+kinds of Failure, Recovery, Recovery id, Errored activity, Recovery task, Continuation. They bind
+this repo. This file adds only what is particular to Playwright and this Bridge, and contradicts
+nothing there.
 
-**Process**: A browser automation made of **Events** connected by control flow (sequence,
-conditions, branches, loops), grouped into **Activities**, together with the **Variables** it reads
-and writes.
-_Avoid_: script, workflow, robot (the robot is what runs a process).
+## The page
 
-**Activity**: A named grouping of **Events** that together achieve one business step (for example
-"Open the spending request"). It labels the **UI log**; it is not the unit execution resumes from.
-Corresponds to Reparo's `activity_id` / `activity_name`.
-_Avoid_: block, step, task.
+**Active page**: The page of the run's `BrowserContext` that the Bridge works on: the most
+recently opened page that is still open, or a new page when none is. An Event's `ctx.page` is
+the Active page when the Event starts, a Completion check's when the check starts. During a
+Recovery, Observations and Recovery actions follow it, so a tab Reparo opens becomes the page the
+Continuation runs on; a Recovery that loses its last page ends with an Infrastructure failure.
+_Avoid_: current page, main page
 
-**Event**: The atomic node of a **Process**, as defined, not as performed: one grounded UI action
-("click Approve", "type the amount into Amount"). A check of that action's outcome belongs to the
-same Event; a check alone is never an Event. An Event performs at most one UI action with a side
-effect; an Event with none is a read of a value off the page. Each Event has a grounded name,
-which another Event may share; only its **Event id** is unique. Every **Continuation** resumes at an Event, so an
-Event depends on nothing produced by another Event except **Variables**. Corresponds to a task of
-the process model Reparo receives.
-_Avoid_: step, task, action (reserved for what Reparo sends back during a **Recovery**).
+**Recording page**: The `ctx.page` an Event receives: the Active page wrapped so that its `goto`,
+its selector shortcuts and the Locators it makes (frames and `mouse.wheel` included) record the
+Event's Logged call. Every other call is Playwright's, untouched, and `expect` works on it as on
+any page. A Completion check's `ctx.page` is the Active page unwrapped: nothing it does reaches
+the UI log.
 
-**Event id**: The stable identifier of an **Event** within its **Process**, the same on every run
-and every loop pass; the id Reparo names in a **Continuation**, and the link from each **Logged
-event** to the Event it performed. Never a **Logged event**'s number. Corresponds to Reparo's
-`model_event_id`.
-_Avoid_: model event id (Reparo's wording for the same thing).
+## What an Event records
 
-**Logged event**: One performance of an **Event** in a run, an entry of the **UI log**, numbered in
-the order it happened; an Event inside a loop yields one Logged event per pass, named after the
-Event plus that pass. The failing performance is not a Logged event: it is reported apart,
-as the **Errored activity**. Corresponds to
-Reparo's `event_id` / `event_name`.
-_Avoid_: event (alone, when the performance is meant), UI log entry.
+**Logged call**: The one Playwright call an Event is recorded as, which becomes its Logged event
+in the UI log: its action if it performed one, else its last read. An Event with no logged call,
+or with a second action, is a Process bug.
+_Avoid_: logged action (a read can be the logged call)
 
-**Process model**: The description of a **Process**'s structure (its **Events** with their
-**Event ids** and grounded names, and the conditions and loops connecting them) that Reparo
-receives with a failure. It comes from the Process alone and is the same for every run.
-Corresponds to Reparo's `model`.
-_Avoid_: BPMN (one format the Process model can take, not the concept), diagram.
+**Action call**: A Playwright call with a side effect on the UI, made through the Recording page:
+`click`, `dblclick`, `fill`, `type`, `press_sequentially`, `press`, `select_option`, `check`,
+`uncheck`, `set_checked`, `hover`, `drag_to`, `set_input_files`, `scroll_into_view_if_needed`,
+`goto` and `mouse.wheel`. An Event makes at most one. It is the Event's UI action, not a Recovery
+action, which only Reparo sends.
+_Avoid_: action (alone: home reserves it for Recovery actions)
 
-**Variables**: The named, serialisable values a **Process** reads and writes; the only state that
-passes from one **Event** to another, and the state sent to Reparo with a failure.
+**Read**: A call that takes a value off the page without changing it: `inner_text`,
+`text_content`, `input_value`, `get_attribute`, `all_inner_texts`, `all_text_contents`. An Event
+with no Action call is a read Event; its last read is its Logged call. Reads in an Event that has
+an Action call are not logged.
 
-**UI log**: The ordered record of **Logged events** in a run up to the failure, sent to Reparo as
-part of the failure payload.
+**Unlogged call**: Any other Playwright call: checks such as `expect(...)`, `is_visible()`,
+`count()` and `wait_for()`, and locator construction. It is never logged and never counts towards
+the one action, which is why the check of an action's outcome goes in the same Event.
 
-**UI failure**: A failure inside an **Event** because the application did not behave as the
-**Process** expected: an element missing, a check the author declared not met. The only kind of
-failure handed to Reparo as a **Recovery**.
-_Avoid_: error (alone), exception.
+**Locator rule**: A Locator, element handle or Python local never crosses from one Event to
+another; each Event builds its own from the Recording page. Only Variables cross, because a
+Continuation may start at any Event (home ADR 0003).
 
-**Process bug**: A mistake in the **Process**'s own code (a wrong condition, a missing
-**Variable**). It ends the run locally and is never handed to Reparo, wherever it happens.
-_Avoid_: UI failure, coding error.
+**Grounded name**: An Event's name as the author writes it, saying what it does on screen ("Click
+Approve", "Type the amount into Amount"). Several Events may share one; only the Event id, the
+decorated function's name, is unique. Logged events are named after it plus the loop pass.
 
-**Environment failure**: A failure that stops the run for reasons outside both the application's
-UI and the **Process**'s code: a service that cannot be reached, a browser that closed or crashed.
-It ends the run locally and is never handed to Reparo.
-_Avoid_: UI failure, Process bug.
+**Secret Event**: An Event declared `secret=True`: its typed input and the states read around its
+Logged call are masked as `***` everywhere Reparo could see them.
 
-**Errored activity**: The **Activity** (and the **Logged event** inside it) where a **UI failure**
-stopped the run, with a short description of that failure.
+## Failures and Recovery here
 
-**Recovery**: One hand-over of a failed run to Reparo: the bridge reports the failure, Reparo
-observes and acts on the browser until it is back in a state the process can continue from, then
-hands control back.
+**Infrastructure failure**: As home defines it; in this Bridge, a Playwright error that says the
+browser, context or page closed or crashed, a network error (`net::ERR_…`), or a failed
+`APIRequestContext` call, and a Recovery whose Active page disappears. The Bridge ends the run
+locally (outcome `local`, or the failed outcome after a Recovery) and, during a Recovery, aborts
+with the wire code `EnvironmentFailure`, an older name for the same thing.
+_Avoid_: environment failure (home's umbrella term, which UI failures also fall under)
 
-**Recovery id**: The identifier Reparo gives a **Recovery** once it has run, by which the
-Recovery is found in Reparo and its result reported back.
-_Avoid_: exception id, robot exception id.
+**Recoverable**: Whether the Bridge hands an Event's UI failures to Reparo. `recoverable=False` on
+an Event or an Activity keeps them local. Which failures a Robot may hand over follows what Reparo
+supports; today that is UI failures, one Recovery per run, before any Continuation.
 
-**Recovery task**: A description, written by the process author, of what recovering an
-**Activity** should achieve, offered to Reparo as a preferred plan. When the author writes
-none, the **Activity**'s name stands in.
-_Avoid_: recovery hint.
+**Recovery task** (per Activity): A recovery task the process author supplies for failures in that
+Activity (`p.activity(..., recovery_task=...)`): experimental, Reparo may ignore it.
 
-**Modality**: A way the bridge lets Reparo see the browser and target elements during a
-**Recovery**, pairing a kind of **Observation** with a way of aiming **Recovery actions**: vision
-(screenshots, coordinates) today, DOM anticipated. A robot offers one or more, in order of
-preference. Corresponds to Reparo's interaction modality.
-_Avoid_: recovery mode, observation mode, agent mode.
+**Vision Modality** (`VisionModality`): The Modality this Bridge offers: JPEG screenshots of the
+Active page, Recovery actions aimed at viewport coordinates, which is why the viewport must be
+fixed. Text targeting is not offered (`ocr: false`). `DomModality` names the DOM Modality but is
+not available.
 
-**Observation**: What the bridge gives Reparo to see the browser's state during a **Recovery**, in
-one of its **Modalities**. Today a screenshot; DOM or accessibility-tree observations are
-anticipated.
-
-**Recovery action**: A UI action Reparo asks the bridge to perform on the browser during a
-**Recovery** (click, type, scroll...), aimed at its target through a **Modality** (coordinates
-today).
-
-**Continuation**: Resuming the **Process** after a **Recovery**, at the **Event** (named by its
-**Event id**, plus the loop pass) Reparo says should run next, skipping whatever the **Recovery**
-already did and nothing it did not.
-
-**Completion check**: A check, written by the process author, of the state a **Process** should
-have reached once its last **Event** has run, on every run, whether or not a **Recovery** happened.
-It reports whether it is met, with a reason when it is not, and never fails the run itself. It
-states what the robot can believe about its own completion, not an audit of whether the run was
-truly correct. It is not an **Event**: it is never part of the **Process model**, never resumed at, and never
-handed to Reparo.
-_Avoid_: final assertion, verification step.
-
-**Run outcome**: How a run of a **Process** ends: completed (the **Completion checks** passed),
-checks failed (the Process reached its end but a Completion check was not met), or failed before
-reaching its end. A failed run is further told apart by when it failed relative to a **Recovery**:
-before any, because Reparo tried and could not recover it or could not be reached, because Reparo's answer could not be
-continued from, or during the **Continuation**. Only a completed run counts as a successful
-Recovery when its result is reported to Reparo.
-_Avoid_: status, result (alone).
+**Failed outcomes**: The Bridge splits home's "failed before its end" Run outcome by when the run
+failed: `local` (before any Recovery, not handed over), `recovery_failed`, `recovery_unavailable`
+(Reparo unreachable, payload rejected, or timed out), `continuation_rejected` (Reparo's answer
+named no valid Event and loop pass) and `continuation_failed` (after resuming).

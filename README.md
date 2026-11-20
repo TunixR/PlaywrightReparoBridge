@@ -1,13 +1,15 @@
 # Reparo Playwright Bridge
 
-Playwright connector for [Reparo](https://reparo.tunixr.com). You describe a browser automation
+The Playwright Bridge for [Reparo](https://reparo.tunixr.com). You describe a browser automation
 as a **Process** of Events grouped into Activities, and `run()` runs it on your Playwright
 `BrowserContext`. When the application's UI doesn't behave as the Process expects, the bridge
 hands the failure to Reparo as one **Recovery**: Reparo sees the browser through screenshots and
 acts on it, then names the Event the run should continue from. The run resumes there.
 
 Vocabulary (Process, Event, Activity, Variables, UI log, Recovery, Continuation, Completion check)
-is defined in [GLOSSARY.md](GLOSSARY.md).
+is defined in Reparo's shared glossary, in the private
+[ReparoHome](https://github.com/TunixR/ReparoHome/blob/main/GLOSSARY.md) repo; the Playwright terms
+(Active page, Logged call, Locator rule, …) are in [GLOSSARY.md](GLOSSARY.md).
 
 - [Install](#install)
 - [Authoring a Process](#authoring-a-process)
@@ -117,8 +119,9 @@ The rules that matter:
   JSON-serialisable: they are sent to Reparo.
 - **Activities** (`p.activity(name, recoverable=True, recovery_task=None)`) group Events into
   business steps for the UI log. Every Event belongs to exactly one Activity, and Activities
-  don't nest. `recovery_task` describes, for Reparo, what recovering that Activity should achieve;
-  without one, the Activity's name is sent.
+  don't nest. `recovery_task` is a recovery task you supply for failures in that Activity:
+  experimental, and Reparo may ignore it on a recovery connection. Without one, the Activity's
+  name is sent, since an eval needs one.
 - **Control flow** belongs to the bridge, so it can resume anywhere:
   `p.for_each(id, over=<list Variable>, as_=<item Variable>)`, and
   `p.if_(id, cond, label=)` / `p.elif_(cond, label=)` / `p.else_()`. Conditions are pure
@@ -183,7 +186,7 @@ asyncio.run(main())
 - `run()` never raises for a failed run: it returns a `RunResult`.
 
 A run makes **at most one Recovery**. A UI failure after the Continuation, a Process bug (any other
-exception, including a plain `assert`) and an Environment failure (the browser or a service went
+exception, including a plain `assert`) and an Infrastructure failure (the browser or a service went
 away) all end the run locally and are never sent to Reparo.
 
 ## ReparoSettings
@@ -210,7 +213,7 @@ summary line, for example `checks_failed after Recovery 6f1c: 1 completion check
 |---|---|
 | `completed` | The Process reached its end and every Completion check was met |
 | `checks_failed` | The Process reached its end, but a Completion check was not met |
-| `local` | Failed before any Recovery and wasn't handed to Reparo (Process bug, Environment failure, opted-out UI failure, missing inputs, …); `reason` says which |
+| `local` | Failed before any Recovery and wasn't handed to Reparo (Process bug, Infrastructure failure, opted-out UI failure, missing inputs, …); `reason` says which |
 | `recovery_failed` | Reparo tried and couldn't recover the failure |
 | `recovery_unavailable` | Reparo couldn't be reached, rejected the payload (`failure.type == "payload_rejected"`) or timed out (`"timeout"`) |
 | `continuation_rejected` | Reparo's answer didn't name a valid Event and loop pass to continue from |
@@ -300,7 +303,7 @@ REPARO_ROBOT_KEY=… uv run python -m examples.spending_approval --ui changed --
 ```
 
 The `real` runs need a Reparo and a robot key. To run one locally, follow the
-[Reparo Quickstart](https://github.com/TunixR/Reparo/tree/future_contract#quickstart) (the `future_contract` branch speaks this contract): it starts Reparo on
+[Reparo Quickstart](https://github.com/TunixR/Reparo/tree/develop#quickstart) on its `develop` branch, which speaks this contract: it starts Reparo on
 `http://localhost:8000`, seeds the default agents, and creates the key with `POST /keys`. A
 Recovery's outcome depends on the LLM, so `recovery_failed` can happen even when the setup is
 correct; check `str(result)` and Reparo's traces.
@@ -319,6 +322,9 @@ Design decisions are in [docs/adr](docs/adr).
 ## Development
 
 ```bash
+git clone --recurse-submodules https://github.com/TunixR/PlaywrightReparoBridge
+cd PlaywrightReparoBridge
+git config core.hooksPath .githooks  # once: the commit-msg hook checks the commit format
 uv sync
 uv run playwright install chromium  # once: tests use real headless Chromium (see Install for Linux deps)
 uv run pytest
@@ -326,3 +332,8 @@ uv run ruff check
 uv run ruff format
 uv run basedpyright
 ```
+
+`--recurse-submodules` fills `.agents/skills`, the agent skills shared from the private ReparoHome
+repo (`git submodule update --init` does it later). Without access to it the folder stays empty,
+and nothing else depends on it. Commits and PR titles follow `type(scope)!: what`, with the scopes
+listed in [AGENTS.md](AGENTS.md#commits); the hook and a CI job on PR titles check it.

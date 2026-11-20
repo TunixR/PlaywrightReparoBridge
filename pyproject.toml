@@ -1,7 +1,7 @@
 [project]
 name = "reparo-playwright-bridge"
 version = "0.1.0"
-description = "Playwright connector for Reparo: run block-structured browser processes and hand failures to Reparo for recovery."
+description = "The Playwright Bridge for Reparo: run block-structured browser processes and hand failures to Reparo for recovery."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
