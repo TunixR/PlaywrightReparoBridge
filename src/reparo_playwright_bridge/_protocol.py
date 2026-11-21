@@ -33,8 +33,15 @@ ROBOT_KEY_HEADER = "X-ROBOT-KEY"
 AGENT_ID_HEADER = "X-AGENT-ID"
 """The GUI agent an eval runs against (`ReparoSettings.eval_agent_id`)."""
 INVALID_RECOVERY_PAYLOAD = "INVALID_RECOVERY_PAYLOAD"
+UNSUPPORTED_CONTRACT_VERSION = "UNSUPPORTED_CONTRACT_VERSION"
+"""Reparo speaks another Contract version; its content names both versions."""
 EVAL_VALIDATION_ERROR = "VALIDATION_ERROR"
 """The eval endpoint's code for a payload or recovery task it can't use."""
+_PAYLOAD_REJECTED_CODES = (
+    INVALID_RECOVERY_PAYLOAD,
+    UNSUPPORTED_CONTRACT_VERSION,
+    EVAL_VALIDATION_ERROR,
+)
 REJECTED_KEY_CLOSE = 1008
 REJECTED_KEY_STATUS = 403
 """Reparo closes with 1008 before accepting the socket, which reaches the robot as HTTP 403."""
@@ -415,7 +422,7 @@ def _done(message: dict[str, object], id_field: str) -> Done | Ended:
 
 def _error(message: dict[str, object], extra: Mapping[str, object]) -> Ended:
     code = message.get("code")
-    if code in (INVALID_RECOVERY_PAYLOAD, EVAL_VALIDATION_ERROR):
+    if code in _PAYLOAD_REJECTED_CODES:
         recovery_log.error(
             "Reparo rejected the payload: %s", message.get("content"), extra=dict(extra)
         )

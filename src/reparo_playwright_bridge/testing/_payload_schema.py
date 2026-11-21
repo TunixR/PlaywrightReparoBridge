@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
 
 def _required_id(value: object) -> str:
@@ -115,6 +115,9 @@ class RobotCapabilities(_Strict):
 
 
 class RecoveryPayload(_Strict):
+    # Any strict integer passes: FakeReparo ships with the Contract version its Bridge targets,
+    # so it has no version check of its own (Reparo refuses a wrong one first, before validation).
+    contract_version: StrictInt
     task_name: str
     platform: str
     os: str

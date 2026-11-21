@@ -38,6 +38,7 @@ CONTINUE = Continue("click_approve", [0])
 
 def valid_payload(**overrides: object) -> JsonObject:
     payload: JsonObject = {
+        "contract_version": 2,
         "task_name": "spending_approval",
         "platform": "playwright",
         "os": "Windows",
@@ -217,6 +218,10 @@ async def payload_answer(payload: object) -> tuple[JsonObject, int | None]:
             id="missing errored_act",
         ),
         pytest.param(
+            {k: v for k, v in valid_payload().items() if k != "contract_version"},  # pyright: ignore[reportAny]  # payload values are any JSON
+            id="missing contract_version",
+        ),
+        pytest.param(
             valid_payload(
                 ui_log=[{**valid_payload()["ui_log"][0], "timestamp": "yesterday"}]
             ),
@@ -313,12 +318,15 @@ async def test_send_error_sends_an_error_frame_and_closes() -> None:
     assert close_code == 1000
 
 
-async def test_send_error_invalid_recovery_payload_closes_with_1003_like_reparo() -> (
-    None
-):
-    _, frames, close_code = await play([SendError("INVALID_RECOVERY_PAYLOAD")])
+@pytest.mark.parametrize(
+    "code", ["INVALID_RECOVERY_PAYLOAD", "UNSUPPORTED_CONTRACT_VERSION"]
+)
+async def test_send_error_for_a_refused_payload_closes_with_1003_like_reparo(
+    code: str,
+) -> None:
+    _, frames, close_code = await play([SendError(code)])
 
-    assert loads(frames[0])["code"] == "INVALID_RECOVERY_PAYLOAD"
+    assert loads(frames[0])["code"] == code
     assert close_code == 1003
 
 
