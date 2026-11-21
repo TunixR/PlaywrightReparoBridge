@@ -75,8 +75,8 @@ class Fail:
 class SendError:
     """End the Recovery: an `error` frame with `code`, then close.
 
-    The close code is 1003 for `INVALID_RECOVERY_PAYLOAD` and `UNSUPPORTED_CONTRACT_VERSION`, as
-    Reparo's, else 1000.
+    The close code is 1003 when `code` is one Reparo sends on rejecting the payload, as Reparo
+    does, else 1000.
     """
 
     code: str

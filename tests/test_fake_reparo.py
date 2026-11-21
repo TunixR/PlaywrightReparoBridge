@@ -321,7 +321,7 @@ async def test_send_error_sends_an_error_frame_and_closes() -> None:
 @pytest.mark.parametrize(
     "code", ["INVALID_RECOVERY_PAYLOAD", "UNSUPPORTED_CONTRACT_VERSION"]
 )
-async def test_send_error_for_a_refused_payload_closes_with_1003_like_reparo(
+async def test_send_error_for_a_rejected_payload_closes_with_1003_like_reparo(
     code: str,
 ) -> None:
     _, frames, close_code = await play([SendError(code)])

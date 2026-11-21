@@ -89,6 +89,7 @@ async def test_a_ui_failure_sends_one_payload_and_a_failed_recovery_ends_the_run
     assert result.failure.event_id == "click_approve"
     assert len(reparo.payloads) == 1
     payload = reparo.payloads[0]
+    assert payload["contract_version"] == 2
     assert payload["task_name"] == "approve requests"
     assert payload["platform"] == "playwright"
     assert payload["errored_act"]["event_name"] == "Click Approve"

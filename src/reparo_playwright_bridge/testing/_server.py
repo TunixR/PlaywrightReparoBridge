@@ -38,8 +38,8 @@ AGENT_ID_HEADER = "X-AGENT-ID"
 PING_INTERVAL = 10.0
 INVALID_RECOVERY_PAYLOAD = "INVALID_RECOVERY_PAYLOAD"
 UNSUPPORTED_CONTRACT_VERSION = "UNSUPPORTED_CONTRACT_VERSION"
-_REFUSED_PAYLOAD_CODES = (INVALID_RECOVERY_PAYLOAD, UNSUPPORTED_CONTRACT_VERSION)
-"""Codes Reparo follows with close 1003: the payload was refused."""
+_REJECTED_PAYLOAD_CODES = (INVALID_RECOVERY_PAYLOAD, UNSUPPORTED_CONTRACT_VERSION)
+"""Codes Reparo follows with close 1003: it rejected the payload."""
 SCREENSHOT_BUDGET = 15.0
 """Seconds the robot has to answer a screenshot request."""
 ACTION_BUDGET = 60.0
@@ -300,7 +300,7 @@ class FakeReparo:
                     await ws.send_json(
                         {"type": "error", "code": step.code, "content": step.content}
                     )
-                    code = 1003 if step.code in _REFUSED_PAYLOAD_CODES else 1000
+                    code = 1003 if step.code in _REJECTED_PAYLOAD_CODES else 1000
                     _ = await ws.close(code=code)
                     return
                 case Close():
