@@ -115,8 +115,6 @@ class RobotCapabilities(_Strict):
 
 
 class RecoveryPayload(_Strict):
-    # Any strict integer passes: FakeReparo ships with the Contract version its Bridge targets,
-    # so it has no version check of its own (Reparo refuses a wrong one first, before validation).
     contract_version: StrictInt
     task_name: str
     platform: str
