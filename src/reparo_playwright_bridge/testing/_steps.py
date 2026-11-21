@@ -73,7 +73,11 @@ class Fail:
 
 @dataclass(frozen=True)
 class SendError:
-    """End the Recovery: an `error` frame with `code`, then close (1003 for `INVALID_RECOVERY_PAYLOAD`)."""
+    """End the Recovery: an `error` frame with `code`, then close.
+
+    The close code is 1003 when `code` is one Reparo sends on rejecting the payload, as Reparo
+    does, else 1000.
+    """
 
     code: str
     content: str = field(default="error sent by FakeReparo's script")

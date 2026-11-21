@@ -13,6 +13,8 @@ from reparo_playwright_bridge._settings import ReparoSettings
 
 type JsonObject = dict[str, object]
 
+CONTRACT_VERSION = 2
+"""The Contract version of the robot contract this Bridge speaks; Reparo refuses any other."""
 PLATFORM = "playwright"
 MASK = "***"
 """A secret Event's `input` and states, wherever Reparo could see them."""
@@ -110,7 +112,7 @@ def build_payload(
     variables: Variables,
     capabilities: JsonObject,
 ) -> Payload:
-    """The Recovery payload, in Reparo's v1 recovery contract."""
+    """The Recovery payload, in contract version 2 of Reparo's robot contract."""
     entries: list[JsonObject] = [
         {
             **_common(case_id, logged.number, logged.event, logged.passes),
@@ -135,6 +137,7 @@ def build_payload(
     }
     model = render(definition, settings.model_format)
     body: JsonObject = {
+        "contract_version": CONTRACT_VERSION,
         "task_name": definition.name,
         "platform": PLATFORM,
         "os": platform.system() or "unknown",

@@ -89,6 +89,7 @@ async def test_a_ui_failure_sends_one_payload_and_a_failed_recovery_ends_the_run
     assert result.failure.event_id == "click_approve"
     assert len(reparo.payloads) == 1
     payload = reparo.payloads[0]
+    assert payload["contract_version"] == 2
     assert payload["task_name"] == "approve requests"
     assert payload["platform"] == "playwright"
     assert payload["errored_act"]["event_name"] == "Click Approve"
@@ -413,27 +414,40 @@ async def test_a_reparo_error_gives_recovery_unavailable(
     assert result.recovery_id is None
 
 
+@pytest.mark.parametrize(
+    ("code", "content"),
+    [
+        ("INVALID_RECOVERY_PAYLOAD", "ui_log.0.timestamp: bad"),
+        (
+            "UNSUPPORTED_CONTRACT_VERSION",
+            "Reparo speaks contract version 3; the payload sent 2.",
+        ),
+    ],
+)
 async def test_a_rejected_payload_gives_payload_rejected_logged_with_reparos_text(
-    context: BrowserContext, site: FixtureServer, caplog: pytest.LogCaptureFixture
+    context: BrowserContext,
+    site: FixtureServer,
+    caplog: pytest.LogCaptureFixture,
+    code: str,
+    content: str,
 ) -> None:
     _ = site.page("/page", PAGE)
     caplog.set_level(logging.DEBUG, logger="reparo_playwright_bridge")
 
-    result, _reparo = await recover_with(
-        context,
-        [SendError("INVALID_RECOVERY_PAYLOAD", content="ui_log.0.timestamp: bad")],
-    )
+    result, _reparo = await recover_with(context, [SendError(code, content=content)])
 
     assert result.outcome == "recovery_unavailable"
     assert result.failure is not None
     assert result.failure.type == "payload_rejected"
+    assert result.reason is not None
+    assert code in result.reason
     errors = [
         r
         for r in caplog.records
         if r.levelno == logging.ERROR and r.name.endswith(".recovery")
     ]
     assert len(errors) == 1
-    assert "ui_log.0.timestamp: bad" in errors[0].getMessage()
+    assert content in errors[0].getMessage()
 
 
 async def test_reparo_pings_are_ignored(

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
 
 def _required_id(value: object) -> str:
@@ -115,6 +115,7 @@ class RobotCapabilities(_Strict):
 
 
 class RecoveryPayload(_Strict):
+    contract_version: StrictInt
     task_name: str
     platform: str
     os: str
