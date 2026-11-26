@@ -69,17 +69,15 @@ extend-select = [
 "tests/**" = ["ARG", "SLF001", "PLC0415", "PLR0915"]
 # By design: command-line programs print.
 "scripts/**" = ["T201"]
-# Debt: what these files broke when the rules above were turned on. Fix a file, then delete its
-# line; never add one. New code follows the rules.
-"examples/spending_approval/example.py" = ["PLC0415", "RUF002"]
-"src/reparo_playwright_bridge/_process.py" = ["SLF001"]
+# By design: a Playwright object wraps a private `_impl_obj`. The recording classes subclass
+# those wrappers, so they hand theirs on, and the target of last resort is the selector on it.
 "src/reparo_playwright_bridge/_recording.py" = ["SLF001"]
 "src/reparo_playwright_bridge/_state_reads.py" = ["SLF001"]
-"tests/test_fake_reparo.py" = ["RET504"]
-"tests/test_recovery_actions.py" = ["ASYNC110"]
-"tests/test_recovery_robustness.py" = ["ASYNC110"]
-"tests/test_run.py" = ["RET504", "RUF002"]
-"tests/test_ui_log.py" = ["PLW0108", "SIM105"]
+# By design: `definition_of` hands the engine a Process's definition, which isn't public API.
+"src/reparo_playwright_bridge/_process.py" = ["SLF001"]
+# By design: the example imports FakeReparo only when it runs one, since it needs the [fake]
+# extra and a run against a real Reparo doesn't.
+"examples/spending_approval/example.py" = ["PLC0415"]
 
 [tool.importlinter]
 # Which module may import which.

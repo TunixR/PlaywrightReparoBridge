@@ -200,7 +200,9 @@ class RecordingLocator(Locator):
         )
         return value
 
-    async def _all(self) -> list[Locator]:
+    @override
+    async def all(self) -> list[Locator]:
+        """The Locators for the elements this one matches, each recording too."""
         return [
             RecordingLocator(locator, self._recorder)
             for locator in await Locator.all(self)
@@ -343,7 +345,6 @@ for _method in READS:
     _install(RecordingLocator, Locator, _method, "_read_call")
 for _method in PAGE_SHORTCUTS:
     _install(RecordingPage, Page, _method, "_shortcut")
-RecordingLocator.all = functools.wraps(Locator.all)(RecordingLocator._all)  # pyright: ignore[reportPrivateUsage]
 
 for _method in (*_MAKES_LOCATORS, "filter", "and_", "or_", "nth"):
     _install_chain(RecordingLocator, Locator, _method)

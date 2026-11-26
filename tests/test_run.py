@@ -417,8 +417,7 @@ async def test_a_process_bug_ends_the_run_local_and_logs_its_traceback(
 def _closed_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
-        port = int(s.getsockname()[1])  # pyright: ignore[reportAny]
-    return port
+        return int(s.getsockname()[1])  # pyright: ignore[reportAny]
 
 
 async def _unreachable_service(ctx: EventContext) -> None:
@@ -573,7 +572,7 @@ async def test_for_each_runs_its_block_once_per_item_binding_the_item(
 def grid_process(
     fail_at: tuple[str, int] | None = None, *, recoverable: bool = True
 ) -> Process:
-    """Notes every cell of `rows` × `cols` in two nested loops; optionally fails at one cell."""
+    """Notes every cell of `rows` x `cols` in two nested loops; optionally fails at one cell."""
     p = Process("grid", variables={"rows": list, "cols": list})
     with p.activity("Open the log"):
 

@@ -31,7 +31,7 @@ class ExampleRun:
 
 
 async def new_context(browser: Browser, base_url: str) -> BrowserContext:
-    """A context at a fixed 1280×720 viewport (vision needs one), on the app's URL."""
+    """A context at a fixed 1280x720 viewport (vision needs one), on the app's URL."""
     context = await browser.new_context(
         viewport={"width": 1280, "height": 720},
         base_url=base_url,

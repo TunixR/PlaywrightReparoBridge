@@ -158,6 +158,8 @@ class FlakyRelay:
         self._target: tuple[str, int] = _host_port(target_url)
         self._drops_left: int = drops
         self.connections: int = 0
+        self.connected: asyncio.Event = asyncio.Event()
+        """Set once the robot has made its first connection."""
         self._server: asyncio.Server | None = None
 
     @property
@@ -178,6 +180,7 @@ class FlakyRelay:
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         self.connections += 1
+        self.connected.set()
         if self._drops_left > 0:
             self._drops_left -= 1
             writer.close()
@@ -325,8 +328,7 @@ async def test_the_browser_going_away_during_a_recovery_ends_the_run_local(
     async with FakeReparo([Silence(10)]) as reparo:
 
         async def interrupt_once_the_payload_is_in() -> None:
-            while not reparo.payloads:
-                await asyncio.sleep(0.05)
+            await reparo.wait_for_payload()
             await interrupt(context)
 
         interrupter = asyncio.create_task(interrupt_once_the_payload_is_in())
@@ -363,8 +365,7 @@ async def test_the_page_closing_while_connecting_ends_the_run_local_without_a_pa
     async with FakeReparo([Fail("no")]) as reparo, FlakyRelay(reparo.url, 1) as relay:
 
         async def close_during_the_backoff() -> None:
-            while relay.connections == 0:
-                await asyncio.sleep(0.02)
+            _ = await relay.connected.wait()
             await context.pages[-1].close()
 
         closer = asyncio.create_task(close_during_the_backoff())
@@ -392,8 +393,7 @@ async def test_a_tab_opened_during_the_recovery_is_followed(
     async with FakeReparo([Silence(10)]) as reparo:
 
         async def switch_tabs() -> None:
-            while not reparo.payloads:
-                await asyncio.sleep(0.05)
+            await reparo.wait_for_payload()
             original = context.pages[-1]
             _ = await context.new_page()
             await original.close()
@@ -420,8 +420,7 @@ async def test_a_crash_in_a_tab_opened_during_the_recovery_ends_the_run_local(
     async with FakeReparo([Silence(10)]) as reparo:
 
         async def open_then_crash() -> None:
-            while not reparo.payloads:
-                await asyncio.sleep(0.05)
+            await reparo.wait_for_payload()
             _ = await context.new_page()
             await _crash_page(context)
 

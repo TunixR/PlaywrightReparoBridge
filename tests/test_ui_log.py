@@ -2,6 +2,7 @@
 # (FakeReparo records payloads as decoded JSON, whose values are any JSON.)
 """The complete UI log: what `reparo.payloads[0]` carries for each Logged event and the Errored activity."""
 
+import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -131,10 +132,8 @@ async def test_a_second_action_the_event_swallows_is_still_a_process_bug(
 
     async def swallow(ctx: EventContext) -> None:
         _ = await ctx.page.goto(url)
-        try:
+        with contextlib.suppress(Exception):
             await ctx.page.get_by_role("button").click()
-        except Exception:  # noqa: BLE001, S110
-            pass
 
     reason = await run_local(context, reparo, swallow)
 
@@ -293,7 +292,7 @@ CALLS: list[tuple[str, Call, str, str | None]] = [
     ("all_inner_texts", lambda p: p.locator("#b").all_inner_texts(), "read", None),
     ("all_text_contents", lambda p: p.locator("#b").all_text_contents(), "read", None),
     ("page.inner_text", lambda p: p.inner_text("#b"), "read", None),
-    ("a locator from all()", lambda p: _click_first_of_all(p), "click", None),
+    ("a locator from all()", _click_first_of_all, "click", None),
 ]
 
 

@@ -100,6 +100,7 @@ class FakeReparo:
         self.script_exhausted: bool = False
         self.problems: list[str] = []
         """Contract violations and script errors; any of them fails the `async with` loudly."""
+        self._payload_received: asyncio.Event = asyncio.Event()
         self._incoming: asyncio.Queue[object] = asyncio.Queue()
         """The robot's replies, for the steps that wait on one."""
         self._recovery_ids: set[str] = set()
@@ -112,6 +113,10 @@ class FakeReparo:
         if self._port is None:
             raise RuntimeError("FakeReparo is not running; use `async with`")
         return f"http://127.0.0.1:{self._port}"
+
+    async def wait_for_payload(self) -> None:
+        """Return once the robot has sent a payload (a JSON object), at once if it already has."""
+        _ = await self._payload_received.wait()
 
     async def __aenter__(self) -> Self:
         app = web.Application()
@@ -207,6 +212,7 @@ class FakeReparo:
             return
         if isinstance(decoded, dict):
             self.payloads.append(cast(JsonObject, decoded))
+            self._payload_received.set()
         try:
             _ = RecoveryPayload.model_validate(decoded)
         except ValidationError as exc:

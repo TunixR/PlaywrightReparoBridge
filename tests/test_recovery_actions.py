@@ -163,8 +163,7 @@ async def test_the_viewport_is_kept_at_its_size_while_the_recovery_runs(
     async with FakeReparo(script, context=context) as reparo:
 
         async def resize_once_the_payload_is_sent() -> None:
-            while not reparo.payloads:
-                await asyncio.sleep(0.05)
+            await reparo.wait_for_payload()
             await context.pages[-1].set_viewport_size({"width": 640, "height": 480})
 
         resizer = asyncio.create_task(resize_once_the_payload_is_sent())
