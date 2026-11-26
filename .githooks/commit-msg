@@ -1,4 +1,0 @@
-#!/bin/sh
-# Checks the commit message is `type(scope)!: what` (AGENTS.md -> Commits).
-# Enable once per clone: git config core.hooksPath .githooks
-exec python3 "$(git rev-parse --show-toplevel)/scripts/commit_format.py" check-commit "$1"

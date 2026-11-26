@@ -27,6 +27,11 @@ dev = [
     "pytest-asyncio>=1.4.1.post1",
     "ruff>=0.17.4",
     "xmlschema>=4.3.2",
+    "import-linter>=2.17",
+    "deptry>=0.25.1",
+    "vulture>=2.16",
+    "complexipy>=9.0.0",
+    "jscpd>=5.4.3",
 ]
 
 [tool.pytest.ini_options]
@@ -34,3 +39,113 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
+
+[tool.ruff.lint]
+# On top of ruff's default rule set. Each family is here for what review would otherwise catch.
+extend-select = [
+    "ARG",      # arguments nothing reads
+    "ASYNC",    # blocking calls and timeouts in async code
+    "B",        # likely bugs (the bugbear rules the defaults leave out)
+    "DTZ",      # datetimes without a timezone
+    "ERA",      # commented-out code
+    "PERF",     # needless work in loops
+    "PGH",      # blanket `# type: ignore` and `# noqa`: a suppression names its rule
+    "PIE",      # needless code
+    "PLC0415",  # imports inside functions, the usual patch over an import cycle
+    "PLR0915",  # functions too long to read
+    "PLR1714",  # repeated equality comparisons
+    "PLW",      # constructs that are probably mistakes
+    "RET",      # needless return and else
+    "RUF",      # ruff's own checks, with unused `# noqa` (RUF100) and dangling tasks (RUF006)
+    "SIM",      # code that has a simpler form
+    "SLF",      # reaching into another object's private members
+    "T20",      # print and pprint left behind
+    "TRY300",   # a return inside try that belongs in else
+    "TRY400",   # logging.error where logging.exception keeps the traceback
+]
+
+[tool.ruff.lint.per-file-ignores]
+# By design: fixtures and fakes take arguments they don't read, and tests reach into internals.
+"tests/**" = ["ARG", "SLF001", "PLC0415", "PLR0915"]
+# By design: command-line programs print.
+"scripts/**" = ["T201"]
+# Debt: what these files broke when the rules above were turned on. Fix a file, then delete its
+# line; never add one. New code follows the rules.
+"examples/spending_approval/example.py" = ["PLC0415", "RUF002"]
+"src/reparo_playwright_bridge/_process.py" = ["SLF001"]
+"src/reparo_playwright_bridge/_recording.py" = ["SLF001"]
+"src/reparo_playwright_bridge/_state_reads.py" = ["SLF001"]
+"tests/test_fake_reparo.py" = ["RET504"]
+"tests/test_recovery_actions.py" = ["ASYNC110"]
+"tests/test_recovery_robustness.py" = ["ASYNC110"]
+"tests/test_run.py" = ["RET504", "RUF002"]
+"tests/test_ui_log.py" = ["PLW0108", "SIM105"]
+
+[tool.importlinter]
+# Which module may import which.
+root_package = "reparo_playwright_bridge"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Only the testing package imports the testing package"
+type = "protected"
+protected_modules = ["reparo_playwright_bridge.testing"]
+allowed_importers = ["reparo_playwright_bridge.testing"]
+
+[[tool.importlinter.contracts]]
+name = "Only the testing package imports aiohttp"
+type = "forbidden"
+# aiohttp comes with the `fake` extra; the library must import without it.
+source_modules = ["reparo_playwright_bridge"]
+forbidden_modules = ["aiohttp"]
+allow_indirect_imports = true
+ignore_imports = [
+    "reparo_playwright_bridge.testing -> aiohttp",
+    "reparo_playwright_bridge.testing.* -> aiohttp",
+]
+
+[[tool.importlinter.contracts]]
+name = "No import cycles"
+type = "acyclic_siblings"
+ancestors = ["reparo_playwright_bridge"]
+
+[tool.deptry]
+# Compares the imports in the code with the dependencies declared above.
+known_first_party = ["reparo_playwright_bridge"]
+
+[tool.vulture]
+# Functions, classes, attributes and variables nothing uses. The tests and examples count as users.
+paths = ["src", "tests", "examples", "scripts"]
+# _payload_schema.py: the fields of FakeReparo's payload schema, which pydantic reads.
+exclude = ["src/reparo_playwright_bridge/testing/_payload_schema.py"]
+min_confidence = 60
+# By design: the Process, pytest or pydantic calls what these decorate.
+ignore_decorators = [
+    "@*.event",
+    "@*.completion_check",
+    "@*.on_continuation",
+    "@*.fixture",
+    "@field_validator",
+    "@model_validator",
+    "@override",
+]
+# By design: names a framework or a protocol reads.
+ignore_names = [
+    "model_config",     # pydantic
+    "exc_type",         # __exit__ and __aexit__ signatures
+    "tb",
+    "do_GET",           # http.server handlers
+    "do_POST",
+    "log_message",
+    "disabled",         # set on a logger
+    "_read_call",       # installed on the recording classes by name
+    "_shortcut",
+    "input_variables",  # public API that nothing in the repo reads
+]
+
+[tool.complexipy]
+# Cognitive complexity: how hard a function's control flow is to follow.
+paths = ["src", "tests", "examples", "scripts"]
+max-complexity-allowed = 15
+failed = true
+

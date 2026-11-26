@@ -37,7 +37,7 @@ empty and the links dangle; nothing here depends on them.
 ## Commits
 
 Commit messages and PR titles are `type(scope)!: what`: `scripts/commit_format.py` checks them
-in the `commit-msg` hook (enable it once per clone with `git config core.hooksPath .githooks`) and
+in the `commit-msg` hook (install the hooks once per clone with `pre-commit install`) and
 in the PR-title CI job (`.github/workflows/pr-title.yml`). Types: `feat`, `fix`, `refactor`,
 `perf`, `test`, `docs`, `build`, `ci`, `chore`, `revert`. `!` marks a breaking change. The
 summary is imperative and lowercase, with no final period. The scope is optional; leave it out for
@@ -60,11 +60,22 @@ The scopes below are the whole list; the checker reads it from this section.
 - `adr`: `docs/adr/`
 - `agents`: `AGENTS.md`, `CLAUDE.md`
 - `skills`: the skills submodule, the links to it and this repo's own skills
-- `ci`: `.github/`, `.githooks/`, `scripts/`
+- `ci`: `.github/`, `.pre-commit-config.yaml`, `scripts/`
 - `deps`: dependency bumps: `pyproject.toml`, `uv.lock`
 
 ## Tooling
 
 `uv sync`, `uv run playwright install chromium` (once; tests drive real headless Chromium; on a
 clean Linux box first `apt-get install -y libatomic1`, then use `install --with-deps chromium`),
-`uv run pytest`, `uv run ruff check`, `uv run ruff format`, `uv run basedpyright`.
+`uv run pytest`, `uv run ruff check --fix`, `uv run ruff format`.
+
+`pre-commit run --all-files` runs every static check: ruff, basedpyright, import-linter (which
+module imports which), deptry (imports match the declared dependencies), vulture (code nothing
+uses), complexipy (functions too tangled to follow) and jscpd (copied code outside the tests:
+repeated blocks, and functions that differ only in names). The hooks run them on commit, and the
+Lint CI job (`.github/workflows/lint.yml`) runs the same hooks. Each tool's rules and exceptions
+are in `pyproject.toml`; jscpd's are in `.jscpd.json`.
+
+When a check fails, change the code. The debt list in `pyproject.toml` (ruff's per-file ignores)
+only shrinks: fix an entry, then delete it. An exception that holds by design goes next to the
+others of its kind, with its reason.

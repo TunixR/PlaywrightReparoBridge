@@ -1,0 +1,26 @@
+name: Lint
+# Runs the pre-commit hooks, so CI enforces what local hooks check (.pre-commit-config.yaml lists
+# them).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # No submodules: the skills submodule is private home, and the checks don't need it.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+      - name: Sync project dependencies
+        run: uv sync --frozen
+      - name: Run pre-commit
+        run: uvx pre-commit run --all-files --show-diff-on-failure
