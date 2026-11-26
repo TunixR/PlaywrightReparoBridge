@@ -76,6 +76,5 @@ repeated blocks, and functions that differ only in names). The hooks run them on
 Lint CI job (`.github/workflows/lint.yml`) runs the same hooks. Each tool's rules and exceptions
 are in `pyproject.toml`; jscpd's are in `.jscpd.json`.
 
-When a check fails, change the code. The debt list in `pyproject.toml` (ruff's per-file ignores)
-only shrinks: fix an entry, then delete it. An exception that holds by design goes next to the
-others of its kind, with its reason.
+When a check fails, change the code. An exception that holds by design goes next to the others of
+its kind in `pyproject.toml`, with its reason.

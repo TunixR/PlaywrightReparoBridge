@@ -34,7 +34,9 @@ class _Strict(BaseModel):
     )
 
 
-class RecoveryUiLogEntry(_Strict):
+class _EventFields(_Strict):
+    """The fields a UI log entry and the errored act share: which Event, and what it did."""
+
     case_id: str
     activity_id: str | None
     activity_name: str | None
@@ -44,11 +46,6 @@ class RecoveryUiLogEntry(_Strict):
     action_type: str
     application: str | None
     input: str | None
-    ui_element_target: str | None
-    ui_group: str | None = None
-    timestamp: str
-    previous_state: str | None
-    current_state: str | None
 
     @field_validator("case_id", "event_id", mode="before")
     @classmethod
@@ -59,6 +56,14 @@ class RecoveryUiLogEntry(_Strict):
     @classmethod
     def _normalize_optional_id(cls, value: object) -> str | None:
         return _optional_id(value)
+
+
+class RecoveryUiLogEntry(_EventFields):
+    ui_element_target: str | None
+    ui_group: str | None = None
+    timestamp: str
+    previous_state: str | None
+    current_state: str | None
 
     @field_validator("timestamp")
     @classmethod
@@ -72,28 +77,9 @@ class RecoveryUiLogEntry(_Strict):
         return value
 
 
-class RecoveryErroredAct(_Strict):
-    case_id: str
-    activity_id: str | None
-    activity_name: str | None
-    event_id: str
-    event_name: str | None
-    model_event_id: str | None = None
-    action_type: str
-    application: str | None
-    input: str | None
+class RecoveryErroredAct(_EventFields):
     error_code: str
     error_description: str
-
-    @field_validator("case_id", "event_id", mode="before")
-    @classmethod
-    def _normalize_required_id(cls, value: object) -> str:
-        return _required_id(value)
-
-    @field_validator("activity_id", mode="before")
-    @classmethod
-    def _normalize_optional_id(cls, value: object) -> str | None:
-        return _optional_id(value)
 
 
 class RobotCapabilities(_Strict):

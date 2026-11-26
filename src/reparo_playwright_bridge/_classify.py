@@ -145,32 +145,40 @@ def _raised_by_playwright_expect(exc: BaseException) -> bool:
     return path.name == "_assertions.py" and "playwright" in path.parts
 
 
+def _classify_playwright_error(exc: PlaywrightError) -> Classified | None:
+    """The class of a Playwright error, or None when it has none of the known shapes."""
+    # Only the first line is the error; the rest is Playwright's call log, which
+    # repeats selectors and so can contain any text. Shapes whose first line quotes
+    # the selector (strict mode) are matched before the Infrastructure markers.
+    message = _first_line(exc.message)
+    if isinstance(exc, PlaywrightTimeoutError):
+        return Classified(
+            FailureKind.UI, _describe_component_error(message), ELEMENT_TIMEOUT
+        )
+    if "strict mode violation" in message:
+        return Classified(
+            FailureKind.UI, _describe_component_error(message), ELEMENT_AMBIGUOUS
+        )
+    if any(marker in message for marker in _INFRASTRUCTURE_MARKERS):
+        return Classified(FailureKind.INFRASTRUCTURE, message)
+    if message.startswith(_INFRASTRUCTURE_PREFIXES):
+        return Classified(FailureKind.INFRASTRUCTURE, message)
+    if message.startswith(_COMPONENT_PREFIXES):
+        return Classified(
+            FailureKind.UI, _describe_component_error(message), UI_ACTION_FAILED
+        )
+    return None
+
+
 def classify(exc: BaseException) -> Classified:
     if isinstance(exc, UIFailure):
         return Classified(FailureKind.UI, exc.description, exc.code)
     if isinstance(exc, ProcessBug):
         return Classified(FailureKind.PROCESS_BUG, str(exc))
-    if isinstance(exc, PlaywrightError):
-        # Only the first line is the error; the rest is Playwright's call log, which
-        # repeats selectors and so can contain any text. Shapes whose first line quotes
-        # the selector (strict mode) are matched before the Infrastructure markers.
-        message = _first_line(exc.message)
-        if isinstance(exc, PlaywrightTimeoutError):
-            return Classified(
-                FailureKind.UI, _describe_component_error(message), ELEMENT_TIMEOUT
-            )
-        if "strict mode violation" in message:
-            return Classified(
-                FailureKind.UI, _describe_component_error(message), ELEMENT_AMBIGUOUS
-            )
-        if any(marker in message for marker in _INFRASTRUCTURE_MARKERS):
-            return Classified(FailureKind.INFRASTRUCTURE, message)
-        if message.startswith(_INFRASTRUCTURE_PREFIXES):
-            return Classified(FailureKind.INFRASTRUCTURE, message)
-        if message.startswith(_COMPONENT_PREFIXES):
-            return Classified(
-                FailureKind.UI, _describe_component_error(message), UI_ACTION_FAILED
-            )
+    if isinstance(exc, PlaywrightError) and (
+        classified := _classify_playwright_error(exc)
+    ):
+        return classified
     if isinstance(exc, AssertionError) and _raised_by_playwright_expect(exc):
         return Classified(
             FailureKind.UI,

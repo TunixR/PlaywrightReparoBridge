@@ -400,8 +400,7 @@ async def test_a_script_that_runs_out_without_a_terminal_step_closes_and_is_mark
 async def recovery_id_from(reparo: FakeReparo) -> str:
     async with open_socket(reparo) as ws:
         await ws.send(json.dumps(valid_payload()))
-        recovery_id = cast(str, (await next_json(ws))["id"])
-    return recovery_id
+        return cast(str, (await next_json(ws))["id"])
 
 
 async def report(

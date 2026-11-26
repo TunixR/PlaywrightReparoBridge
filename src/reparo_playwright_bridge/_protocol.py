@@ -348,36 +348,48 @@ async def _serve(
             )
             await _abort(ws, code, description, extra)
             return Ended.unavailable(description, "timeout")
-        message = _decode(frame)
-        kind = message.get("type") if message is not None else None
-        match kind:
-            case "ping":
-                continue
-            case "screenshot":
-                await _send_reply(ws, await session.observe(VISION))
-            case "observe":
-                modality = (message or {}).get("modality", VISION)
-                await _send_reply(ws, await session.observe(str(modality)))
-            case "action":
-                await _send_reply(ws, await session.act((message or {}).get("content")))
-            case "done":
-                return _done(message or {}, "id")
-            case "eval_result":
-                return _done(message or {}, "exception_id")
-            case "error":
-                return _error(message or {}, extra)
-            case _:
-                shown = kind if isinstance(kind, str) else "<unparseable>"
-                recovery_log.warning(
-                    "Reparo sent an unsupported message type %s",
-                    shown,
-                    extra=dict(extra),
+        handled = await _handle(ws, session, _decode(frame), extra)
+        if handled is not None:
+            return handled
+
+
+async def _handle(
+    ws: ClientConnection,
+    session: RecoverySession,
+    message: dict[str, object] | None,
+    extra: Mapping[str, object],
+) -> Done | Ended | None:
+    """Answer one message from Reparo; a `Done` or `Ended` when it ends the Recovery."""
+    kind = message.get("type") if message is not None else None
+    match kind:
+        case "ping":
+            pass
+        case "screenshot":
+            await _send_reply(ws, await session.observe(VISION))
+        case "observe":
+            modality = (message or {}).get("modality", VISION)
+            await _send_reply(ws, await session.observe(str(modality)))
+        case "action":
+            await _send_reply(ws, await session.act((message or {}).get("content")))
+        case "done":
+            return _done(message or {}, "id")
+        case "eval_result":
+            return _done(message or {}, "exception_id")
+        case "error":
+            return _error(message or {}, extra)
+        case _:
+            shown = kind if isinstance(kind, str) else "<unparseable>"
+            recovery_log.warning(
+                "Reparo sent an unsupported message type %s",
+                shown,
+                extra=dict(extra),
+            )
+            await ws.send(
+                json.dumps(
+                    {"success": False, "error": f"unsupported message type {shown}"}
                 )
-                await ws.send(
-                    json.dumps(
-                        {"success": False, "error": f"unsupported message type {shown}"}
-                    )
-                )
+            )
+    return None
 
 
 async def _send_reply(ws: ClientConnection, reply: Reply) -> None:
