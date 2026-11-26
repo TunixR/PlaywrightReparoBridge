@@ -67,4 +67,19 @@ The scopes below are the whole list; the checker reads it from this section.
 
 `uv sync`, `uv run playwright install chromium` (once; tests drive real headless Chromium; on a
 clean Linux box first `apt-get install -y libatomic1`, then use `install --with-deps chromium`),
-`uv run pytest`, `uv run ruff check`, `uv run ruff format`, `uv run basedpyright`.
+`uv run pytest`, `uv run ruff check --fix`, `uv run ruff format`.
+
+`scripts/lint.sh` runs every static check and names the ones that failed: ruff, basedpyright,
+import-linter (which module imports which), deptry (imports match the declared dependencies),
+vulture (code nothing uses), complexipy (functions too tangled to follow) and jscpd (copied code:
+repeated blocks, and functions that differ only in names). The `pre-commit` hook (same
+`core.hooksPath` as the `commit-msg` hook) and the Lint CI job (`.github/workflows/lint.yml`) both
+run it. Each tool's rules and exceptions are in `pyproject.toml`; jscpd's are in `.jscpd.json` and,
+for the tests, `.jscpd-tests.json`.
+
+When a check fails, change the code. The debt list in `pyproject.toml` (ruff's per-file ignores),
+`complexipy-snapshot.json` (the functions already over the complexity limit) and the
+`.jscpd*-baseline.json` files (the copies that already exist; jscpd marks the others `[NEW]`) only
+shrink: fix an entry, then delete it. `--update-baseline` rewrites a jscpd baseline from the code,
+so run it when nothing is marked `[NEW]`. An exception that holds by design goes next to the others
+of its kind, with its reason.

@@ -1,0 +1,25 @@
+name: Lint
+# Runs the static checks the pre-commit hook runs (scripts/lint.sh, AGENTS.md -> Tooling).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  static-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # No submodules: the skills submodule is private home, and the checks don't need it.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+      - name: Sync project dependencies
+        run: uv sync --frozen
+      - name: Run the static checks
+        run: scripts/lint.sh

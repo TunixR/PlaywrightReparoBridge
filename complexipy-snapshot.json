@@ -1,0 +1,22 @@
+[
+  {
+    "path": "src/reparo_playwright_bridge/_classify.py",
+    "file_name": "_classify.py",
+    "functions": [
+      {
+        "name": "classify",
+        "complexity": 16
+      }
+    ]
+  },
+  {
+    "path": "src/reparo_playwright_bridge/_protocol.py",
+    "file_name": "_protocol.py",
+    "functions": [
+      {
+        "name": "_serve",
+        "complexity": 17
+      }
+    ]
+  }
+]
