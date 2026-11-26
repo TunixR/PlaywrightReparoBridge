@@ -1,7 +1,7 @@
 """The Bridge's commit format, `type(scope)!: what`, for commit messages and PR titles.
 
 Subcommands:
-    check-commit <file>   the commit-msg hook (`.githooks/commit-msg`): check a commit message.
+    check-commit <file>   the commit-msg hook (`.pre-commit-config.yaml`): check a commit message.
     check-title <title>   CI: check a PR title, which becomes the squash commit.
 
 The allowed scopes are the list under `## Commits` in AGENTS.md, read from there on every run.

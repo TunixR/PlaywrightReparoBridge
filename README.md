@@ -324,7 +324,7 @@ Design decisions are in [docs/adr](docs/adr).
 ```bash
 git clone --recurse-submodules https://github.com/TunixR/PlaywrightReparoBridge
 cd PlaywrightReparoBridge
-git config core.hooksPath .githooks  # once: the commit-msg hook checks the commit format
+pre-commit install  # once: the hooks run the static checks and check the commit format
 uv sync
 uv run playwright install chromium  # once: tests use real headless Chromium (see Install for Linux deps)
 uv run pytest

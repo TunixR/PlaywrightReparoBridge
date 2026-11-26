@@ -1,4 +1,0 @@
-#!/bin/sh
-# Runs the static checks on the working tree (AGENTS.md -> Tooling).
-# Enable once per clone: git config core.hooksPath .githooks
-exec "$(git rev-parse --show-toplevel)/scripts/lint.sh"
